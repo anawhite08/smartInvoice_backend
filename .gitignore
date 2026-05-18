@@ -1,0 +1,17 @@
+# Variables de entorno (Contiene secretos)
+.env
+
+# Carpeta de credenciales
+credenciales/
+
+# Entorno virtual de Python
+.venv/
+pyenv.cfg
+
+# Archivos ejecutables y logs
+cloud-sql-proxy.exe
+*.log
+
+# Carpetas de caché de Python
+__pycache__/
+*.py[cod]
