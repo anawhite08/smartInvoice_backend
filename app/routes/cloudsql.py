@@ -27,21 +27,18 @@ def rutas_usuarios():
             if not data:
                 return jsonify({"error": "No se proporcionaron datos"}), 400
 
-            # 2. Validación: El nombre, email y password son obligatorios
+            # 2. Validación: nombre y email son obligatorios
             nombre = data.get("nombre")
             email = data.get("email")
-            password = data.get("password")
             apellido = data.get("apellido")
 
             if not nombre:
                 return jsonify({"error": "El campo 'nombre' es obligatorio"}), 400
             if not email:
                 return jsonify({"error": "El campo 'email' es obligatorio"}), 400
-            if not password:
-                return jsonify({"error": "El campo 'password' es obligatorio"}), 400
 
-            # 3. Primero, crear el usuario en Firebase Auth
-            firebase_user, firebase_err = crear_firebase_user(email, password, nombre, apellido or "")
+            # 3. Primero, crear el usuario en Firebase Auth (se envía correo de establecer contraseña)
+            firebase_user, firebase_err = crear_firebase_user(email, nombre, apellido or "")
             if firebase_err:
                 return jsonify({"error": f"Error al crear usuario en Firebase: {firebase_err}"}), 400
 

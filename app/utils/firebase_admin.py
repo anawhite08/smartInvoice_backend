@@ -32,13 +32,19 @@ def delete_firebase_user(correo):
     except Exception as e:
         return False, f"Error en Firebase: {str(e)}"
 
-def crear_firebase_user(email, password, nombre, apellido):
+def crear_firebase_user(email, nombre, apellido):
+    import secrets
     try:
+        # Generar una contraseña temporal aleatoria (el usuario nunca la verá)
+        temp_password = secrets.token_urlsafe(16)
+
         user = auth.create_user(
             email=email,
-            password=password,
+            password=temp_password,
             display_name=f"{nombre} {apellido}".strip()
         )
+
+        print(f"✅ Usuario Firebase creado: {user.uid} ({email})")
         return user, None
     except Exception as e:
         return None, str(e)
