@@ -31,3 +31,14 @@ def delete_firebase_user(correo):
         return False, "Usuario no encontrado en Firebase"
     except Exception as e:
         return False, f"Error en Firebase: {str(e)}"
+
+def crear_firebase_user(email, password, nombre, apellido):
+    try:
+        user = auth.create_user(
+            email=email,
+            password=password,
+            display_name=f"{nombre} {apellido}".strip()
+        )
+        return user, None
+    except Exception as e:
+        return None, str(e)

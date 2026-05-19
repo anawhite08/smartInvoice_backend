@@ -1,6 +1,7 @@
 import uuid
 from flask import Blueprint, json, request, jsonify, send_file
 from ..extensions import get_engine
+from ..utils.firebase_admin import crear_firebase_user, delete_firebase_user
 from ..utils.cloudsql import (
     crear_usuario,
     get_usuarios_activos,
@@ -11,7 +12,6 @@ from ..utils.cloudsql import (
 
 
 sql_bp = Blueprint("cloudsql", __name__, url_prefix="/cloudsql")
-
 
 ## --- Rutas para Usuarios --- ##
 @sql_bp.route("/usuario", methods=["GET", "POST"])
@@ -27,34 +27,47 @@ def rutas_usuarios():
             if not data:
                 return jsonify({"error": "No se proporcionaron datos"}), 400
 
-            # 2. Validación mínima: El nombre es obligatorio
+            # 2. Validación: El nombre, email y password son obligatorios
             nombre = data.get("nombre")
+            email = data.get("email")
+            password = data.get("password")
+            apellido = data.get("apellido")
+
             if not nombre:
                 return jsonify({"error": "El campo 'nombre' es obligatorio"}), 400
+            if not email:
+                return jsonify({"error": "El campo 'email' es obligatorio"}), 400
+            if not password:
+                return jsonify({"error": "El campo 'password' es obligatorio"}), 400
 
-            # 3. Preparar el diccionario con los campos exactos de tu tabla
-            # Usamos .get() para que los campos opcionales queden como None (NULL en SQL)
+            # 3. Primero, crear el usuario en Firebase Auth
+            firebase_user, firebase_err = crear_firebase_user(email, password, nombre, apellido or "")
+            if firebase_err:
+                return jsonify({"error": f"Error al crear usuario en Firebase: {firebase_err}"}), 400
+
+            # 4. Segundo, crear el usuario en la Base de Datos (Cloud SQL)
             datos_usuario = {
                 "nombre": nombre,
-                "apellido": data.get("apellido"),
-                "email": data.get("email"),
-                "password": data.get("password"),
+                "apellido": apellido,
+                "email": email,
             }
 
-            # 4. Llamar a la función lógica
             nuevo_id = crear_usuario(datos_usuario)
 
             if nuevo_id:
                 return jsonify(
                     {
                         "status": "success",
-                        "message": f"Usuario '{nombre}' creado exitosamente",
+                        "message": f"Usuario '{nombre}' creado exitosamente en Firebase y Base de Datos",
                         "id_usuario": nuevo_id,
+                        "firebase_uid": firebase_user.uid
                     }
                 ), 201
             else:
+                # Rollback: Si falla la base de datos, eliminamos el usuario de Firebase para mantener consistencia
+                delete_firebase_user(email)
                 return jsonify(
-                    {"error": "No se pudo crear la cadena en la base de datos"}
+                    {"error": "No se pudo crear el usuario en la base de datos. Se canceló la creación en Firebase."}
                 ), 500
 
     except Exception as e:

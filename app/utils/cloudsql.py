@@ -22,7 +22,7 @@ def row_to_dict(row):
 def crear_usuario(datos: dict) -> str | None:
     """
     Crea un nuevo usuario y retorna su id (UUID v4) generado por la BD.
-    :param datos: Diccionario con nombre, apellido, email y password (ya hasheada).
+    :param datos: Diccionario con nombre, apellido, email.
     """
     try:
         engine = get_engine()
@@ -30,7 +30,7 @@ def crear_usuario(datos: dict) -> str | None:
             query = text("""
                 INSERT INTO usuarios (nombre, apellido, email)
                 VALUES (:nombre, :apellido, :email)
-                RETURNING id;
+                RETURNING id_usuario;
             """)
 
             result = conn.execute(
@@ -61,7 +61,7 @@ def get_usuarios_activos() -> list:
         engine = get_engine()
         with engine.connect() as conn:
             query = text("""
-                SELECT id, nombre, apellido, email, fecha_registro, activo
+                SELECT id_usuario, nombre, apellido, email, fecha_registro, activo
                 FROM usuarios
                 WHERE activo = TRUE
                 ORDER BY fecha_registro DESC;
@@ -84,11 +84,11 @@ def get_usuario_por_id(id_usuario: str) -> dict | None:
         engine = get_engine()
         with engine.connect() as conn:
             query = text("""
-                SELECT id, nombre, apellido, email, fecha_registro, activo
+                SELECT id_usuario, nombre, apellido, email, fecha_registro, activo
                 FROM usuarios
-                WHERE id = :id
+                WHERE id_usuario = :id_usuario
             """)
-            result = conn.execute(query, {"id": id_usuario}).fetchone()
+            result = conn.execute(query, {"id_usuario": id_usuario}).fetchone()
 
             if result:
                 return row_to_dict(result)
@@ -111,12 +111,12 @@ def actualizar_usuario(id_usuario: str, datos: dict) -> bool:
                 SET nombre = :nombre,
                     apellido = :apellido,
                     email = :email
-                WHERE id = :id
+                WHERE id_usuario = :id_usuario
             """)
             conn.execute(
                 query,
                 {
-                    "id": id_usuario,
+                    "id_usuario": id_usuario,
                     "nombre": datos.get("nombre"),
                     "apellido": datos.get("apellido"),
                     "email": datos.get("email"),
@@ -138,8 +138,8 @@ def eliminar_usuario(id_usuario: str) -> bool:
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            query = text("UPDATE usuarios SET activo = FALSE WHERE id = :id")
-            conn.execute(query, {"id": id_usuario})
+            query = text("UPDATE usuarios SET activo = FALSE WHERE id_usuario = :id_usuario")
+            conn.execute(query, {"id_usuario": id_usuario})
             conn.commit()
             print(f"🗑️ Usuario {id_usuario} desactivado (Soft Delete).")
             return True
