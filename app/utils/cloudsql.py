@@ -99,6 +99,29 @@ def get_usuario_por_id(id_usuario: str) -> dict | None:
         return None
 
 
+def get_usuario_por_email(email: str) -> dict | None:
+    """
+    Busca un usuario específico por su correo electrónico.
+    """
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            query = text("""
+                SELECT id_usuario, nombre, apellido, email, fecha_registro, activo
+                FROM usuarios
+                WHERE email = :email AND activo = TRUE
+            """)
+            result = conn.execute(query, {"email": email}).fetchone()
+
+            if result:
+                return row_to_dict(result)
+            return None
+
+    except Exception as e:
+        print(f"❌ Error al obtener el usuario por email {email}: {e}")
+        return None
+
+
 def actualizar_usuario(id_usuario: str, datos: dict) -> bool:
     """
     Actualiza los datos modificables de un usuario (nombre, apellido, email).

@@ -6,6 +6,7 @@ from ..utils.cloudsql import (
     crear_usuario,
     get_usuarios_activos,
     get_usuario_por_id,
+    get_usuario_por_email,
     actualizar_usuario,
     eliminar_usuario,
     crear_proveedor,
@@ -87,6 +88,22 @@ def rutas_usuarios():
                     {"error": "No se pudo crear el usuario en la base de datos. Se canceló la creación en Firebase."}
                 ), 500
 
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@sql_bp.route("/usuario/buscar", methods=["GET"])
+def buscar_usuario_por_email():
+    try:
+        email = request.args.get("email")
+        if not email:
+            return jsonify({"error": "El parámetro 'email' es requerido"}), 400
+
+        usuario = get_usuario_por_email(email)
+        if not usuario:
+            return jsonify({"message": "Usuario no encontrado"}), 404
+
+        return jsonify(usuario), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
