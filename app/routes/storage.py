@@ -23,19 +23,12 @@ def upload():
     except Exception:
         return jsonify({"error": "Formato JSON inválido"}), 400
 
-    file_name = data.get("fileName")
-    content_b64 = data.get("base64")
-    type_document = data.get("type_document")
-
-    # Para la nueva ruta de "Mis documentos"
-    # Nombre del bucket para documentos (el que está en 'us')
-    UNSCANNED_BUCKET_NAME = "ordenes_compra"
-
-    # Nombre del bucket para logos/perfiles
-    CADENAS_LOGO_BUCKET_NAME = "cadenas_logo"
+    file_name = data.get("fileName") or data.get("file_name")
+    content_b64 = data.get("base64") or data.get("file_base64")
+    type_document = data.get("type_document") or data.get("type")
 
     if not file_name or not content_b64:
-        return jsonify({"error": "fileName y base64 requeridos"}), 400
+        return jsonify({"error": "fileName (o file_name) y base64 (o file_base64) requeridos"}), 400
 
     # 2. Decodificación temprana
     try:
@@ -43,42 +36,40 @@ def upload():
     except Exception:
         return jsonify({"error": "base64 no es un valor válido"}), 400
 
-    # 3. Lógica de Identificadores (UUID o Usuario)
-    if type_document == "document":
-        id_final = str(uuid.uuid4())
-        # Validación de duplicados (tu bucle While)
-        while True:
-            if not storage_client.bucket(UNSCANNED_BUCKET_NAME).blob(id_final).exists():
-                break
-            id_final = str(uuid.uuid4())
+    # 3. Lógica por tipo de documento (invoices -> /invoices, profile -> /profile)
+    unique_id = str(uuid.uuid4())
+    if type_document in ["invoices", "document"]:
+        blob_name = f"invoices/{unique_id}"
+    elif type_document in ["profile", "profile_image", "profile_picture"]:
+        blob_name = f"profile/{unique_id}"
+    else:
+        # Default fallback
+        blob_name = f"invoices/{unique_id}"
 
-        target_bucket = UNSCANNED_BUCKET_NAME
-    else:  # profile_image
-        id_final = data.get("id_cadena")
-        if not id_final:
-            return jsonify(
-                {"error": "id_cadena es requerido para imágenes de cadena"}
-            ), 400
-        target_bucket = CADENAS_LOGO_BUCKET_NAME
-
-    # 4. USO DE LA FUNCIÓN SUSTITUTA
+    # 4. USO DE LA FUNCIÓN DE UTILIDAD CENTRALIZADA
     try:
-        blob_subido = upload_to_storage(target_bucket, id_final, file_bytes, file_name)
+        blob_subido = upload_to_storage(INVOICES_BUCKET_NAME, blob_name, file_bytes, file_name)
 
-        response_data = {"msg": "Archivo subido correctamente", "document_id": id_final}
-
-        # Lógica extra para perfiles (URL firmada)
-        if type_document != "document":
+        # Generar URL firmada válida por 1 hora
+        try:
             signed_url = blob_subido.generate_signed_url(
                 version="v4", expiration=datetime.timedelta(hours=1), method="GET"
             )
-            response_data["url_firmada"] = signed_url
+        except Exception as sign_err:
+            signed_url = f"https://storage.googleapis.com/{INVOICES_BUCKET_NAME}/{blob_name}"
+            print(f"⚠️ No se pudo generar la URL firmada, usando URL pública por defecto: {sign_err}")
+
+        response_data = {
+            "msg": "Archivo subido correctamente",
+            "document_id": blob_name,
+            "url_firmada": signed_url
+        }
 
         return jsonify(response_data), 201
 
     except Exception as e:
-        print(f"Error en la subida: {e}")
-        return jsonify({"error": "Error interno al procesar el archivo"}), 500
+        print(f"❌ Error en la subida: {e}")
+        return jsonify({"error": f"Error interno al procesar el archivo: {str(e)}"}), 500
 
 
 @storage_bp.route("/files", methods=["GET", "POST", "DELETE"])

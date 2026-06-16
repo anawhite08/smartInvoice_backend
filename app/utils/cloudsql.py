@@ -2,9 +2,10 @@ from sqlalchemy import text
 from ..extensions import get_engine
 import uuid
 from datetime import datetime, date
+import decimal
 
 
-# Helper para serializar filas de SQLAlchemy que contienen UUIDs y Fechas
+# Helper para serializar filas de SQLAlchemy que contienen UUIDs, Fechas y Decimals
 def row_to_dict(row):
     if row is None:
         return None
@@ -12,6 +13,8 @@ def row_to_dict(row):
     for key, value in d.items():
         if isinstance(value, (uuid.UUID, datetime, date)):
             d[key] = str(value)
+        elif isinstance(value, decimal.Decimal):
+            d[key] = float(value)
     return d
 
 
@@ -473,23 +476,23 @@ def crear_factura_completa(datos: dict) -> str | None:
 
         with engine.begin() as conn:
             # 1. Insertar la cabecera de la factura
-            query_cabecera = text("""
-                INSERT INTO facturas (
-                    tipo_factura, id_proveedor, id_sociedad, numero_factura, 
-                    fecha_factura, importe_total, id_impuesto, estado_registro_sap, 
-                    documento_sap_generado
-                )
-                VALUES (
-                    :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura, 
-                    :fecha_factura, :importe_total, :id_impuesto, :estado_registro_sap, 
-                    :documento_sap_generado
-                )
-                RETURNING id_factura;
-            """)
-            
-            result_cabecera = conn.execute(
-                query_cabecera,
-                {
+            id_factura_custom = datos.get("id_factura")
+            if id_factura_custom:
+                query_cabecera = text("""
+                    INSERT INTO facturas (
+                        id_factura, tipo_factura, id_proveedor, id_sociedad, numero_factura, 
+                        fecha_factura, importe_total, id_impuesto, estado_registro_sap, 
+                        documento_sap_generado
+                    )
+                    VALUES (
+                        :id_factura, :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura, 
+                        :fecha_factura, :importe_total, :id_impuesto, :estado_registro_sap, 
+                        :documento_sap_generado
+                    )
+                    RETURNING id_factura;
+                """)
+                params = {
+                    "id_factura": id_factura_custom,
                     "tipo_factura": tipo_factura,
                     "id_proveedor": datos.get("id_proveedor"),
                     "id_sociedad": datos.get("id_sociedad"),
@@ -500,7 +503,33 @@ def crear_factura_completa(datos: dict) -> str | None:
                     "estado_registro_sap": datos.get("estado_registro_sap", "Pendiente"),
                     "documento_sap_generado": datos.get("documento_sap_generado"),
                 }
-            )
+            else:
+                query_cabecera = text("""
+                    INSERT INTO facturas (
+                        tipo_factura, id_proveedor, id_sociedad, numero_factura, 
+                        fecha_factura, importe_total, id_impuesto, estado_registro_sap, 
+                        documento_sap_generado
+                    )
+                    VALUES (
+                        :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura, 
+                        :fecha_factura, :importe_total, :id_impuesto, :estado_registro_sap, 
+                        :documento_sap_generado
+                    )
+                    RETURNING id_factura;
+                """)
+                params = {
+                    "tipo_factura": tipo_factura,
+                    "id_proveedor": datos.get("id_proveedor"),
+                    "id_sociedad": datos.get("id_sociedad"),
+                    "numero_factura": datos.get("numero_factura"),
+                    "fecha_factura": datos.get("fecha_factura"),
+                    "importe_total": datos.get("importe_total"),
+                    "id_impuesto": datos.get("id_impuesto"),
+                    "estado_registro_sap": datos.get("estado_registro_sap", "Pendiente"),
+                    "documento_sap_generado": datos.get("documento_sap_generado"),
+                }
+            
+            result_cabecera = conn.execute(query_cabecera, params)
             id_factura = result_cabecera.fetchone()[0]
             str_id_factura = str(id_factura)
 
@@ -577,9 +606,9 @@ def get_facturas(filtros: dict = None) -> list:
         
         sql_base = """
             SELECT f.*, 
-                   p.nombre_proveedor, p.rif_proveedor,
-                   s.nombre_sociedad, s.rif_sociedad,
-                   i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto
+                   p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor,
+                   s.nombre_sociedad, s.rif_sociedad, s.codigo_sociedad_sap,
+                   i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto, i.codigo_impuesto_sap
             FROM facturas f
             JOIN proveedores p ON f.id_proveedor = p.id_proveedor
             JOIN sociedades_sap s ON f.id_sociedad = s.id_sociedad
@@ -618,9 +647,9 @@ def get_factura_completa_por_id(id_factura: str) -> dict | None:
         
         sql_cabecera = """
             SELECT f.*, 
-                   p.nombre_proveedor, p.rif_proveedor,
-                   s.nombre_sociedad, s.rif_sociedad,
-                   i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto
+                   p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor,
+                   s.nombre_sociedad, s.rif_sociedad, s.codigo_sociedad_sap,
+                   i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto, i.codigo_impuesto_sap
             FROM facturas f
             JOIN proveedores p ON f.id_proveedor = p.id_proveedor
             JOIN sociedades_sap s ON f.id_sociedad = s.id_sociedad
