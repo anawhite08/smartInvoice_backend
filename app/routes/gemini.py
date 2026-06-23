@@ -101,6 +101,7 @@ REGLAS GENERALES DE EXTRACCIÓN
 
 3. EVITA ALUCINACIONES:
    - Si no puedes determinar el valor de un campo con base en el documento, devuélvelo como null.
+   - Si ves dos unidades de precios, debes tomar el dolar que siempre va representado com $XX donde las x son los numeros, es decir, el signo de dolar siempre va delante de izquierda a derecha.
 
 4. RESOLUCIÓN DE ENTIDADES (MAPEO CON BASE DE DATOS):
    Para cada entidad, busca la coincidencia más probable en los catálogos adjuntos. Si no hay coincidencia clara o segura, pon null en los campos correspondientes a IDs y códigos.
@@ -167,8 +168,8 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
   "importe_total": 0.00,
   
   "detalle_financiero": {{
-    "cuenta_contable": "Estimar cuenta contable lógica para SAP según rubro (ej. 6105, 6210, etc.), o null",
-    "centro_costo": "Estimar centro de costo lógico para SAP según rubro (ej. 1001, 1002, etc.), o null"
+    "cuenta_contable": "Debe ser null, no estimar ni llenar por defecto",
+    "centro_costo": "Debe ser null, no estimar ni llenar por defecto"
   }},
   
   "items": [
