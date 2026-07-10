@@ -459,10 +459,35 @@ def eliminar_impuesto(id_impuesto: str) -> bool:
         print(f"❌ Error al eliminar el impuesto {id_impuesto}: {e}")
         raise e
 
-
 ## =============================================================================
 ## HELPERS DE FACTURAS (TRANSACCIONAL)
 ## =============================================================================
+
+def get_id_estado_por_nombre(conn, nombre: str) -> str:
+    """
+    Obtiene el UUID de un estado por su nombre de forma tolerante a variaciones de texto.
+    """
+    nombre_limpio = nombre.strip().lower()
+    
+    if "pendiente" in nombre_limpio or "revision" in nombre_limpio:
+        estado_target = "Pendiente Revision"
+    elif "registrada" in nombre_limpio or "sap" in nombre_limpio or "procesada" in nombre_limpio:
+        estado_target = "Registrada SAP"
+    elif "cancel" in nombre_limpio or "anul" in nombre_limpio:
+        estado_target = "Cancelado"
+    else:
+        estado_target = "Pendiente Revision"
+        
+    query = text("SELECT id_estado_factura FROM estados_factura WHERE nombre_estado = :nombre_estado;")
+    res = conn.execute(query, {"nombre_estado": estado_target}).fetchone()
+    if res:
+        return str(res[0])
+        
+    res_any = conn.execute(text("SELECT id_estado_factura FROM estados_factura LIMIT 1;")).fetchone()
+    if res_any:
+        return str(res_any[0])
+    raise ValueError("No se pudieron cargar los estados en la base de datos.")
+
 
 def crear_factura_completa(datos: dict) -> str | None:
     """
@@ -475,18 +500,24 @@ def crear_factura_completa(datos: dict) -> str | None:
             raise ValueError("El tipo de factura debe ser 'Financiera' o 'Logistica'")
 
         with engine.begin() as conn:
-            # 1. Insertar la cabecera de la factura
+            # 1. Resolver el UUID del estado
+            id_estado = datos.get("id_estado_factura")
+            if not id_estado:
+                texto_estado = datos.get("estado_registro_sap", "Pendiente Revision")
+                id_estado = get_id_estado_por_nombre(conn, texto_estado)
+
+            # 2. Insertar la cabecera de la factura
             id_factura_custom = datos.get("id_factura")
             if id_factura_custom:
                 query_cabecera = text("""
                     INSERT INTO facturas (
                         id_factura, tipo_factura, id_proveedor, id_sociedad, numero_factura, 
-                        fecha_factura, importe_total, id_impuesto, estado_registro_sap, 
+                        fecha_factura, importe_total, id_impuesto, id_estado_factura, 
                         documento_sap_generado
                     )
                     VALUES (
                         :id_factura, :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura, 
-                        :fecha_factura, :importe_total, :id_impuesto, :estado_registro_sap, 
+                        :fecha_factura, :importe_total, :id_impuesto, :id_estado_factura, 
                         :documento_sap_generado
                     )
                     RETURNING id_factura;
@@ -500,19 +531,19 @@ def crear_factura_completa(datos: dict) -> str | None:
                     "fecha_factura": datos.get("fecha_factura"),
                     "importe_total": datos.get("importe_total"),
                     "id_impuesto": datos.get("id_impuesto"),
-                    "estado_registro_sap": datos.get("estado_registro_sap", "Pendiente"),
+                    "id_estado_factura": id_estado,
                     "documento_sap_generado": datos.get("documento_sap_generado"),
                 }
             else:
                 query_cabecera = text("""
                     INSERT INTO facturas (
                         tipo_factura, id_proveedor, id_sociedad, numero_factura, 
-                        fecha_factura, importe_total, id_impuesto, estado_registro_sap, 
+                        fecha_factura, importe_total, id_impuesto, id_estado_factura, 
                         documento_sap_generado
                     )
                     VALUES (
                         :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura, 
-                        :fecha_factura, :importe_total, :id_impuesto, :estado_registro_sap, 
+                        :fecha_factura, :importe_total, :id_impuesto, :id_estado_factura, 
                         :documento_sap_generado
                     )
                     RETURNING id_factura;
@@ -525,7 +556,7 @@ def crear_factura_completa(datos: dict) -> str | None:
                     "fecha_factura": datos.get("fecha_factura"),
                     "importe_total": datos.get("importe_total"),
                     "id_impuesto": datos.get("id_impuesto"),
-                    "estado_registro_sap": datos.get("estado_registro_sap", "Pendiente"),
+                    "id_estado_factura": id_estado,
                     "documento_sap_generado": datos.get("documento_sap_generado"),
                 }
             
@@ -533,7 +564,7 @@ def crear_factura_completa(datos: dict) -> str | None:
             id_factura = result_cabecera.fetchone()[0]
             str_id_factura = str(id_factura)
 
-            # 2. Insertar los detalles según el tipo de factura
+            # 3. Insertar los detalles según el tipo de factura
             if tipo_factura == "Financiera":
                 detalle_financiero = datos.get("detalle_financiero")
                 if not detalle_financiero:
@@ -605,11 +636,15 @@ def get_facturas(filtros: dict = None) -> list:
         engine = get_engine()
         
         sql_base = """
-            SELECT f.*, 
+            SELECT f.id_factura, f.tipo_factura, f.id_proveedor, f.id_sociedad, f.numero_factura,
+                   f.fecha_factura, f.importe_total, f.id_impuesto, f.documento_sap_generado,
+                   f.fecha_creacion, f.id_estado_factura,
+                   ef.nombre_estado AS estado_registro_sap, 
                    p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor,
                    s.nombre_sociedad, s.rif_sociedad, s.codigo_sociedad_sap,
                    i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto, i.codigo_impuesto_sap
             FROM facturas f
+            JOIN estados_factura ef ON f.id_estado_factura = ef.id_estado_factura
             JOIN proveedores p ON f.id_proveedor = p.id_proveedor
             JOIN sociedades_sap s ON f.id_sociedad = s.id_sociedad
             JOIN codigos_impuesto_sap i ON f.id_impuesto = i.id_impuesto
@@ -628,8 +663,14 @@ def get_facturas(filtros: dict = None) -> list:
                 sql_base += " AND f.id_sociedad = :id_sociedad"
                 params["id_sociedad"] = filtros.get("id_sociedad")
             if filtros.get("estado_registro_sap"):
-                sql_base += " AND f.estado_registro_sap = :estado_registro_sap"
-                params["estado_registro_sap"] = filtros.get("estado_registro_sap")
+                val = filtros.get("estado_registro_sap")
+                try:
+                    import uuid
+                    uuid.UUID(val)
+                    sql_base += " AND f.id_estado_factura = :estado_registro_sap"
+                except (ValueError, ImportError):
+                    sql_base += " AND ef.nombre_estado = :estado_registro_sap"
+                params["estado_registro_sap"] = val
                 
         sql_base += " ORDER BY f.fecha_creacion DESC;"
         
@@ -646,11 +687,15 @@ def get_factura_completa_por_id(id_factura: str) -> dict | None:
         engine = get_engine()
         
         sql_cabecera = """
-            SELECT f.*, 
+            SELECT f.id_factura, f.tipo_factura, f.id_proveedor, f.id_sociedad, f.numero_factura,
+                   f.fecha_factura, f.importe_total, f.id_impuesto, f.documento_sap_generado,
+                   f.fecha_creacion, f.id_estado_factura,
+                   ef.nombre_estado AS estado_registro_sap, 
                    p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor,
                    s.nombre_sociedad, s.rif_sociedad, s.codigo_sociedad_sap,
                    i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto, i.codigo_impuesto_sap
             FROM facturas f
+            JOIN estados_factura ef ON f.id_estado_factura = ef.id_estado_factura
             JOIN proveedores p ON f.id_proveedor = p.id_proveedor
             JOIN sociedades_sap s ON f.id_sociedad = s.id_sociedad
             JOIN codigos_impuesto_sap i ON f.id_impuesto = i.id_impuesto
@@ -703,22 +748,27 @@ def actualizar_factura_completa(id_factura: str, datos: dict) -> bool:
                     return False
                 tipo_factura = curr[0]
 
-            query_update = text("""
-                UPDATE facturas
-                SET id_proveedor = :id_proveedor,
-                    id_sociedad = :id_sociedad,
-                    numero_factura = :numero_factura,
-                    fecha_factura = :fecha_factura,
-                    importe_total = :importe_total,
-                    id_impuesto = :id_impuesto,
-                    estado_registro_sap = :estado_registro_sap,
-                    documento_sap_generado = :documento_sap_generado
-                WHERE id_factura = :id_factura;
-            """)
-            
-            conn.execute(
-                query_update,
-                {
+            # Resolver UUID del estado
+            id_estado = None
+            if "estado_registro_sap" in datos:
+                id_estado = get_id_estado_por_nombre(conn, datos["estado_registro_sap"])
+            if not id_estado:
+                id_estado = datos.get("id_estado_factura")
+
+            if id_estado:
+                query_update = text("""
+                    UPDATE facturas
+                    SET id_proveedor = :id_proveedor,
+                        id_sociedad = :id_sociedad,
+                        numero_factura = :numero_factura,
+                        fecha_factura = :fecha_factura,
+                        importe_total = :importe_total,
+                        id_impuesto = :id_impuesto,
+                        id_estado_factura = :id_estado_factura,
+                        documento_sap_generado = :documento_sap_generado
+                    WHERE id_factura = :id_factura;
+                """)
+                params_update = {
                     "id_factura": id_factura,
                     "id_proveedor": datos.get("id_proveedor"),
                     "id_sociedad": datos.get("id_sociedad"),
@@ -726,10 +776,33 @@ def actualizar_factura_completa(id_factura: str, datos: dict) -> bool:
                     "fecha_factura": datos.get("fecha_factura"),
                     "importe_total": datos.get("importe_total"),
                     "id_impuesto": datos.get("id_impuesto"),
-                    "estado_registro_sap": datos.get("estado_registro_sap"),
+                    "id_estado_factura": id_estado,
                     "documento_sap_generado": datos.get("documento_sap_generado"),
                 }
-            )
+            else:
+                query_update = text("""
+                    UPDATE facturas
+                    SET id_proveedor = :id_proveedor,
+                        id_sociedad = :id_sociedad,
+                        numero_factura = :numero_factura,
+                        fecha_factura = :fecha_factura,
+                        importe_total = :importe_total,
+                        id_impuesto = :id_impuesto,
+                        documento_sap_generado = :documento_sap_generado
+                    WHERE id_factura = :id_factura;
+                """)
+                params_update = {
+                    "id_factura": id_factura,
+                    "id_proveedor": datos.get("id_proveedor"),
+                    "id_sociedad": datos.get("id_sociedad"),
+                    "numero_factura": datos.get("numero_factura"),
+                    "fecha_factura": datos.get("fecha_factura"),
+                    "importe_total": datos.get("importe_total"),
+                    "id_impuesto": datos.get("id_impuesto"),
+                    "documento_sap_generado": datos.get("documento_sap_generado"),
+                }
+            
+            conn.execute(query_update, params_update)
 
             if tipo_factura == "Financiera":
                 detalle_financiero = datos.get("detalle_financiero")
@@ -812,4 +885,3 @@ def eliminar_factura(id_factura: str) -> bool:
     except Exception as e:
         print(f"❌ Error al eliminar factura {id_factura}: {e}")
         raise e
-
