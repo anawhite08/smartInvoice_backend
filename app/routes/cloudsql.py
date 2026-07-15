@@ -68,6 +68,7 @@ def rutas_usuarios():
                 "nombre": nombre,
                 "apellido": apellido,
                 "email": email,
+                "tipo_usuario": data.get("tipo_usuario", "Unidad de Negocio")
             }
 
             nuevo_id = crear_usuario(datos_usuario)

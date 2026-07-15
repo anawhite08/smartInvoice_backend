@@ -25,14 +25,14 @@ def row_to_dict(row):
 def crear_usuario(datos: dict) -> str | None:
     """
     Crea un nuevo usuario y retorna su id (UUID v4) generado por la BD.
-    :param datos: Diccionario con nombre, apellido, email.
+    :param datos: Diccionario con nombre, apellido, email, tipo_usuario.
     """
     try:
         engine = get_engine()
         with engine.connect() as conn:
             query = text("""
-                INSERT INTO usuarios (nombre, apellido, email)
-                VALUES (:nombre, :apellido, :email)
+                INSERT INTO usuarios (nombre, apellido, email, tipo_usuario)
+                VALUES (:nombre, :apellido, :email, :tipo_usuario)
                 RETURNING id_usuario;
             """)
 
@@ -42,6 +42,7 @@ def crear_usuario(datos: dict) -> str | None:
                     "nombre": datos.get("nombre"),
                     "apellido": datos.get("apellido"),
                     "email": datos.get("email"),
+                    "tipo_usuario": datos.get("tipo_usuario", "Unidad de Negocio"),
                 },
             )
 
@@ -64,7 +65,7 @@ def get_usuarios_activos() -> list:
         engine = get_engine()
         with engine.connect() as conn:
             query = text("""
-                SELECT id_usuario, nombre, apellido, email, fecha_registro, activo
+                SELECT id_usuario, nombre, apellido, email, tipo_usuario, fecha_registro, activo
                 FROM usuarios
                 WHERE activo = TRUE
                 ORDER BY fecha_registro DESC;
@@ -87,7 +88,7 @@ def get_usuario_por_id(id_usuario: str) -> dict | None:
         engine = get_engine()
         with engine.connect() as conn:
             query = text("""
-                SELECT id_usuario, nombre, apellido, email, fecha_registro, activo
+                SELECT id_usuario, nombre, apellido, email, tipo_usuario, fecha_registro, activo
                 FROM usuarios
                 WHERE id_usuario = :id_usuario
             """)
@@ -110,7 +111,7 @@ def get_usuario_por_email(email: str) -> dict | None:
         engine = get_engine()
         with engine.connect() as conn:
             query = text("""
-                SELECT id_usuario, nombre, apellido, email, fecha_registro, activo
+                SELECT id_usuario, nombre, apellido, email, tipo_usuario, fecha_registro, activo
                 FROM usuarios
                 WHERE email = :email AND activo = TRUE
             """)
@@ -127,27 +128,32 @@ def get_usuario_por_email(email: str) -> dict | None:
 
 def actualizar_usuario(id_usuario: str, datos: dict) -> bool:
     """
-    Actualiza los datos modificables de un usuario (nombre, apellido, email).
+    Actualiza los datos modificables de un usuario (nombre, apellido, email, tipo_usuario).
     """
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            query = text("""
-                UPDATE usuarios
-                SET nombre = :nombre,
-                    apellido = :apellido,
-                    email = :email
-                WHERE id_usuario = :id_usuario
-            """)
-            conn.execute(
-                query,
-                {
-                    "id_usuario": id_usuario,
-                    "nombre": datos.get("nombre"),
-                    "apellido": datos.get("apellido"),
-                    "email": datos.get("email"),
-                },
-            )
+            fields_to_update = []
+            params = {"id_usuario": id_usuario}
+            
+            if "nombre" in datos:
+                fields_to_update.append("nombre = :nombre")
+                params["nombre"] = datos.get("nombre")
+            if "apellido" in datos:
+                fields_to_update.append("apellido = :apellido")
+                params["apellido"] = datos.get("apellido")
+            if "email" in datos:
+                fields_to_update.append("email = :email")
+                params["email"] = datos.get("email")
+            if "tipo_usuario" in datos:
+                fields_to_update.append("tipo_usuario = :tipo_usuario")
+                params["tipo_usuario"] = datos.get("tipo_usuario")
+                
+            if not fields_to_update:
+                return True
+                
+            query_str = f"UPDATE usuarios SET {', '.join(fields_to_update)} WHERE id_usuario = :id_usuario"
+            conn.execute(text(query_str), params)
             conn.commit()
             print(f"✅ Usuario {id_usuario} actualizado correctamente.")
             return True
