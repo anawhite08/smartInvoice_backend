@@ -28,17 +28,27 @@ def crear_usuario(datos: dict) -> str | None:
     :param datos: Diccionario con nombre, apellido, email, tipo_usuario.
     """
     try:
+        import uuid
+        user_uuid = uuid.uuid4()
         engine = get_engine()
         with engine.connect() as conn:
+            # 1. Registrar en la tabla sujeto
+            conn.execute(
+                text("INSERT INTO sujeto (id_sujeto, tipo) VALUES (:id_sujeto, 'usuario')"),
+                {"id_sujeto": user_uuid}
+            )
+
+            # 2. Registrar en la tabla usuarios
             query = text("""
-                INSERT INTO usuarios (nombre, apellido, email, tipo_usuario)
-                VALUES (:nombre, :apellido, :email, :tipo_usuario)
+                INSERT INTO usuarios (id_usuario, nombre, apellido, email, tipo_usuario)
+                VALUES (:id_usuario, :nombre, :apellido, :email, :tipo_usuario)
                 RETURNING id_usuario;
             """)
 
             result = conn.execute(
                 query,
                 {
+                    "id_usuario": user_uuid,
                     "nombre": datos.get("nombre"),
                     "apellido": datos.get("apellido"),
                     "email": datos.get("email"),
@@ -891,3 +901,236 @@ def eliminar_factura(id_factura: str) -> bool:
     except Exception as e:
         print(f"❌ Error al eliminar factura {id_factura}: {e}")
         raise e
+
+
+## =============================================================================
+## UNIDADES DE NEGOCIO Y ROLES
+## =============================================================================
+
+def crear_unidad_negocio(datos: dict) -> str | None:
+    try:
+        import uuid
+        unit_id = uuid.uuid4()
+        engine = get_engine()
+        with engine.connect() as conn:
+            # 1. Registrar en sujeto
+            conn.execute(
+                text("INSERT INTO sujeto (id_sujeto, tipo) VALUES (:id_sujeto, 'unidad_negocio')"),
+                {"id_sujeto": unit_id}
+            )
+            # 2. Registrar en unidades_negocio
+            conn.execute(
+                text("""
+                    INSERT INTO unidades_negocio (id_unidad_negocio, nombre, descripcion)
+                    VALUES (:id, :nombre, :descripcion);
+                """),
+                {
+                    "id": unit_id,
+                    "nombre": datos.get("nombre"),
+                    "descripcion": datos.get("descripcion")
+                }
+            )
+            conn.commit()
+            return str(unit_id)
+    except Exception as e:
+        print(f"❌ Error al crear unidad de negocio: {e}")
+        return None
+
+def get_unidades_negocio() -> list:
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            # Consultar todas las unidades
+            units_result = conn.execute(text("""
+                SELECT id_unidad_negocio, nombre, descripcion, fecha_creacion 
+                FROM unidades_negocio
+                ORDER BY nombre;
+            """)).fetchall()
+            
+            unidades = []
+            for unit in units_result:
+                unit_dict = row_to_dict(unit)
+                # Consultar miembros de la unidad
+                members_result = conn.execute(text("""
+                    SELECT u.id_usuario, u.nombre, u.apellido, u.email
+                    FROM miembros_unidad_negocio m
+                    JOIN usuarios u ON m.id_usuario = u.id_usuario
+                    WHERE m.id_unidad_negocio = :id_unidad AND u.activo = TRUE;
+                """), {"id_unidad": unit_dict["id_unidad_negocio"]}).fetchall()
+                
+                unit_dict["integrantes"] = [row_to_dict(m) for m in members_result]
+                unidades.append(unit_dict)
+                
+            return unidades
+    except Exception as e:
+        print(f"❌ Error al obtener unidades de negocio: {e}")
+        return []
+
+def actualizar_unidad_negocio(id_unidad: str, datos: dict) -> bool:
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    UPDATE unidades_negocio 
+                    SET nombre = :nombre, descripcion = :descripcion
+                    WHERE id_unidad_negocio = :id;
+                """),
+                {
+                    "id": id_unidad,
+                    "nombre": datos.get("nombre"),
+                    "descripcion": datos.get("descripcion")
+                }
+            )
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"❌ Error al actualizar unidad de negocio {id_unidad}: {e}")
+        return False
+
+def eliminar_unidad_negocio(id_unidad: str) -> bool:
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            # Borrar de sujeto (cascada borrará unidades_negocio y miembros_unidad_negocio)
+            conn.execute(
+                text("DELETE FROM sujeto WHERE id_sujeto = :id;"),
+                {"id": id_unidad}
+            )
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"❌ Error al eliminar unidad de negocio {id_unidad}: {e}")
+        return False
+
+def asignar_miembros_unidad(id_unidad: str, id_usuarios: list) -> bool:
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            # 1. Limpiar miembros actuales
+            conn.execute(
+                text("DELETE FROM miembros_unidad_negocio WHERE id_unidad_negocio = :id_unidad;"),
+                {"id_unidad": id_unidad}
+            )
+            # 2. Insertar nuevos miembros
+            for user_id in id_usuarios:
+                conn.execute(
+                    text("""
+                        INSERT INTO miembros_unidad_negocio (id_unidad_negocio, id_usuario)
+                        VALUES (:id_unidad, :id_usuario);
+                    """),
+                    {"id_unidad": id_unidad, "id_usuario": user_id}
+                )
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"❌ Error al asignar miembros a unidad {id_unidad}: {e}")
+        return False
+
+def get_roles() -> list:
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            roles_result = conn.execute(text("""
+                SELECT id_rol, nombre, descripcion, es_predefinido, fecha_creacion
+                FROM roles
+                ORDER BY nombre;
+            """)).fetchall()
+            
+            roles = []
+            for r in roles_result:
+                rol_dict = row_to_dict(r)
+                # Consultar permisos del rol
+                perms_result = conn.execute(text("""
+                    SELECT id_permiso FROM rol_permisos WHERE id_rol = :id_rol;
+                """), {"id_rol": rol_dict["id_rol"]}).fetchall()
+                rol_dict["permisos"] = [p[0] for p in perms_result]
+                roles.append(rol_dict)
+            return roles
+    except Exception as e:
+        print(f"❌ Error al obtener roles: {e}")
+        return []
+
+def crear_rol(datos: dict) -> str | None:
+    try:
+        engine = get_engine()
+        import uuid
+        rol_id = uuid.uuid4()
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO roles (id_rol, nombre, descripcion, es_predefinido)
+                    VALUES (:id, :nombre, :descripcion, :es_predefinido);
+                """),
+                {
+                    "id": rol_id,
+                    "nombre": datos.get("nombre"),
+                    "descripcion": datos.get("descripcion"),
+                    "es_predefinido": datos.get("es_predefinido", False)
+                }
+            )
+            # Insertar permisos
+            for perm_id in datos.get("permisos", []):
+                conn.execute(
+                    text("INSERT INTO rol_permisos (id_rol, id_permiso) VALUES (:id_rol, :id_permiso);"),
+                    {"id_rol": rol_id, "id_permiso": perm_id}
+                )
+            conn.commit()
+            return str(rol_id)
+    except Exception as e:
+        print(f"❌ Error al crear rol: {e}")
+        return None
+
+def actualizar_rol(id_rol: str, datos: dict) -> bool:
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(
+                text("""
+                    UPDATE roles
+                    SET nombre = :nombre, descripcion = :descripcion
+                    WHERE id_rol = :id;
+                """),
+                {
+                    "id": id_rol,
+                    "nombre": datos.get("nombre"),
+                    "descripcion": datos.get("descripcion")
+                }
+            )
+            # Actualizar permisos
+            conn.execute(text("DELETE FROM rol_permisos WHERE id_rol = :id;"), {"id": id_rol})
+            for perm_id in datos.get("permisos", []):
+                conn.execute(
+                    text("INSERT INTO rol_permisos (id_rol, id_permiso) VALUES (:id_rol, :id_permiso);"),
+                    {"id_rol": id_rol, "id_permiso": perm_id}
+                )
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"❌ Error al actualizar rol {id_rol}: {e}")
+        return False
+
+def eliminar_rol(id_rol: str) -> bool:
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("DELETE FROM roles WHERE id_rol = :id;"), {"id": id_rol})
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"❌ Error al eliminar rol {id_rol}: {e}")
+        return False
+
+def get_permisos() -> list:
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            perms_result = conn.execute(text("""
+                SELECT id_permiso, nombre, descripcion, categoria
+                FROM permisos
+                ORDER BY categoria, id_permiso;
+            """)).fetchall()
+            return [row_to_dict(p) for p in perms_result]
+    except Exception as e:
+        print(f"❌ Error al obtener permisos: {e}")
+        return []

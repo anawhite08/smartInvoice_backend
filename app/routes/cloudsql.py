@@ -29,6 +29,16 @@ from ..utils.cloudsql import (
     get_factura_completa_por_id,
     actualizar_factura_completa,
     eliminar_factura,
+    crear_unidad_negocio,
+    get_unidades_negocio,
+    actualizar_unidad_negocio,
+    eliminar_unidad_negocio,
+    asignar_miembros_unidad,
+    get_roles,
+    crear_rol,
+    actualizar_rol,
+    eliminar_rol,
+    get_permisos,
 )
 
 
@@ -452,5 +462,134 @@ def rutas_factura_detalle(id_factura):
                 return jsonify({"status": "success", "message": "Factura y detalles asociados eliminados exitosamente"}), 200
             else:
                 return jsonify({"error": "No se pudo eliminar la factura"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+## =============================================================================
+## RUTAS PARA UNIDADES DE NEGOCIO
+## =============================================================================
+
+@sql_bp.route("/unidades-negocio", methods=["GET", "POST"])
+def rutas_unidades_negocio():
+    try:
+        if request.method == "GET":
+            unidades = get_unidades_negocio()
+            return jsonify(unidades), 200
+
+        if request.method == "POST":
+            data = request.get_json()
+            if not data or not data.get("nombre"):
+                return jsonify({"error": "El nombre de la unidad de negocio es obligatorio"}), 400
+
+            nuevo_id = crear_unidad_negocio(data)
+            if nuevo_id:
+                # Si se envían integrantes de una vez
+                if "integrantes" in data and isinstance(data["integrantes"], list):
+                    asignar_miembros_unidad(nuevo_id, data["integrantes"])
+                
+                return jsonify({
+                    "status": "success",
+                    "message": "Unidad de negocio creada exitosamente",
+                    "id_unidad_negocio": nuevo_id
+                }), 201
+            else:
+                return jsonify({"error": "No se pudo crear la unidad de negocio"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@sql_bp.route("/unidades-negocio/<id_unidad>", methods=["GET", "PATCH", "DELETE"])
+def rutas_unidad_negocio_detalle(id_unidad):
+    try:
+        if request.method == "GET":
+            unidades = get_unidades_negocio()
+            for u in unidades:
+                if u["id_unidad_negocio"] == id_unidad:
+                    return jsonify(u), 200
+            return jsonify({"error": "Unidad de negocio no encontrada"}), 404
+
+        if request.method == "PATCH":
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "No se proporcionaron datos"}), 400
+
+            success = actualizar_unidad_negocio(id_unidad, data)
+            if "integrantes" in data and isinstance(data["integrantes"], list):
+                asignar_miembros_unidad(id_unidad, data["integrantes"])
+                
+            if success:
+                return jsonify({"status": "success", "message": "Unidad de negocio actualizada exitosamente"}), 200
+            else:
+                return jsonify({"error": "No se pudo actualizar la unidad de negocio"}), 404
+
+        if request.method == "DELETE":
+            success = eliminar_unidad_negocio(id_unidad)
+            if success:
+                return jsonify({"status": "success", "message": "Unidad de negocio eliminada exitosamente"}), 200
+            else:
+                return jsonify({"error": "No se pudo eliminar la unidad de negocio"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+## =============================================================================
+## RUTAS PARA ROLES Y PERMISOS
+## =============================================================================
+
+@sql_bp.route("/roles", methods=["GET", "POST"])
+def rutas_roles():
+    try:
+        if request.method == "GET":
+            roles = get_roles()
+            return jsonify(roles), 200
+
+        if request.method == "POST":
+            data = request.get_json()
+            if not data or not data.get("nombre"):
+                return jsonify({"error": "El nombre del rol es obligatorio"}), 400
+
+            nuevo_id = crear_rol(data)
+            if nuevo_id:
+                return jsonify({
+                    "status": "success",
+                    "message": "Rol creado exitosamente",
+                    "id_rol": nuevo_id
+                }), 201
+            else:
+                return jsonify({"error": "No se pudo crear el rol"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@sql_bp.route("/roles/<id_rol>", methods=["PATCH", "DELETE"])
+def rutas_rol_detalle(id_rol):
+    try:
+        if request.method == "PATCH":
+            data = request.get_json()
+            if not data:
+                return jsonify({"error": "No se proporcionaron datos"}), 400
+
+            success = actualizar_rol(id_rol, data)
+            if success:
+                return jsonify({"status": "success", "message": "Rol actualizado exitosamente"}), 200
+            else:
+                return jsonify({"error": "No se pudo actualizar el rol"}), 404
+
+        if request.method == "DELETE":
+            success = eliminar_rol(id_rol)
+            if success:
+                return jsonify({"status": "success", "message": "Rol eliminado exitosamente"}), 200
+            else:
+                return jsonify({"error": "No se pudo eliminar el rol"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@sql_bp.route("/permisos", methods=["GET"])
+def rutas_permisos():
+    try:
+        permisos = get_permisos()
+        return jsonify(permisos), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
