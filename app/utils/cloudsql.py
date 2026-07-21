@@ -963,7 +963,7 @@ def get_unidades_negocio() -> list:
                 
             return unidades
     except Exception as e:
-        print(f"❌ Error al obtener unidades de negocio: {e}")
+        print(f"[ERROR] Error al obtener unidades de negocio: {e}")
         return []
 
 def actualizar_unidad_negocio(id_unidad: str, datos: dict) -> bool:

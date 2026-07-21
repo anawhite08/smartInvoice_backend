@@ -41,7 +41,9 @@ def upload():
     if type_document in ["invoices", "document"]:
         blob_name = f"invoices/{unique_id}"
     elif type_document in ["profile", "profile_image", "profile_picture"]:
-        blob_name = f"profile/{unique_id}"
+        import os
+        base_name = os.path.basename(file_name)
+        blob_name = f"profile/{base_name}"
     else:
         # Default fallback
         blob_name = f"invoices/{unique_id}"
@@ -50,10 +52,11 @@ def upload():
     try:
         blob_subido = upload_to_storage(INVOICES_BUCKET_NAME, blob_name, file_bytes, file_name)
 
-        # Generar URL firmada válida por 1 hora
+        # Generar URL firmada (365 días para imágenes de perfil, 1 hora por defecto para facturas por seguridad)
         try:
+            expiration_time = datetime.timedelta(days=365) if "profile" in blob_name else datetime.timedelta(hours=1)
             signed_url = blob_subido.generate_signed_url(
-                version="v4", expiration=datetime.timedelta(hours=1), method="GET"
+                version="v4", expiration=expiration_time, method="GET"
             )
         except Exception as sign_err:
             signed_url = f"https://storage.googleapis.com/{INVOICES_BUCKET_NAME}/{blob_name}"

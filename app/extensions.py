@@ -34,7 +34,7 @@ connector = Connector()
 def get_connection():
     # Si detecta que está en Google Cloud (Cloud Run), usa el conector oficial directamente
     if os.getenv('K_SERVICE'):
-        print("🔗 Conectando a Cloud SQL usando Connector (Cloud Run)...")
+        print("[CONEXION] Conectando a Cloud SQL usando Connector (Cloud Run)...")
         return connector.connect(
             DIRECCION,
             "pg8000",
@@ -46,7 +46,7 @@ def get_connection():
     # Si estamos en LOCAL, intentamos primero el Proxy local (127.0.0.1)
     # y si falla, intentamos usar el Connector oficial (que también funciona localmente)
     try:
-        print("🔗 Intentando conexión a Cloud SQL vía Proxy local (127.0.0.1:5432)...")
+        print("[CONEXION] Intentando conexión a Cloud SQL vía Proxy local (127.0.0.1:5432)...")
         import pg8000
         return pg8000.connect(
             user=USER_DB,
@@ -57,8 +57,8 @@ def get_connection():
             timeout=5 # Timeout corto para no colgar la app si no hay proxy
         )
     except Exception as e:
-        print(f"⚠️ No se pudo conectar al Proxy local: {e}")
-        print(f"🔗 Reintentando conexión directa a Cloud SQL ({DIRECCION}) usando Connector...")
+        print(f"[ADVERTENCIA] No se pudo conectar al Proxy local: {e}")
+        print(f"[CONEXION] Reintentando conexión directa a Cloud SQL ({DIRECCION}) usando Connector...")
         try:
             return connector.connect(
                 DIRECCION,
@@ -68,7 +68,7 @@ def get_connection():
                 db=DB_NAME,
             )
         except Exception as connector_e:
-            print(f"❌ Error fatal en la conexión a Cloud SQL: {connector_e}")
+            print(f"[ERROR] Error fatal en la conexión a Cloud SQL: {connector_e}")
             raise connector_e
 
 
