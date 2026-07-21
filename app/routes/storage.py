@@ -43,7 +43,8 @@ def upload():
     elif type_document in ["profile", "profile_image", "profile_picture"]:
         import os
         base_name = os.path.basename(file_name)
-        blob_name = f"profile/{base_name}"
+        name_without_ext, _ = os.path.splitext(base_name)
+        blob_name = f"profile/{name_without_ext}"
     else:
         # Default fallback
         blob_name = f"invoices/{unique_id}"

@@ -68,13 +68,17 @@ def rutas_usuarios():
             if not email:
                 return jsonify({"error": "El campo 'email' es obligatorio"}), 400
 
-            # 3. Primero, crear el usuario en Firebase Auth (se envía correo de establecer contraseña)
-            firebase_user, firebase_err = crear_firebase_user(email, nombre, apellido or "")
+            # 3. Primero, pre-generar el UUID para que coincida exactamente en ambos sistemas
+            nuevo_id_str = str(uuid.uuid4())
+
+            # 4. Segundo, crear el usuario en Firebase Auth con ese UID específico
+            firebase_user, firebase_err = crear_firebase_user(email, nombre, apellido or "", uid=nuevo_id_str)
             if firebase_err:
                 return jsonify({"error": f"Error al crear usuario en Firebase: {firebase_err}"}), 400
 
-            # 4. Segundo, crear el usuario en la Base de Datos (Cloud SQL)
+            # 5. Tercero, crear el usuario en la Base de Datos (Cloud SQL) con ese mismo UUID
             datos_usuario = {
+                "id_usuario": nuevo_id_str,
                 "nombre": nombre,
                 "apellido": apellido,
                 "email": email,
@@ -87,7 +91,7 @@ def rutas_usuarios():
                 return jsonify(
                     {
                         "status": "success",
-                        "message": f"Usuario '{nombre}' creado exitosamente en Firebase y Base de Datos",
+                        "message": f"Usuario '{nombre}' creado exitosamente en Firebase y Base de Datos con IDs alineados",
                         "id_usuario": nuevo_id,
                         "firebase_uid": firebase_user.uid
                     }

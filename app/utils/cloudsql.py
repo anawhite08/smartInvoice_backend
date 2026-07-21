@@ -25,11 +25,18 @@ def row_to_dict(row):
 def crear_usuario(datos: dict) -> str | None:
     """
     Crea un nuevo usuario y retorna su id (UUID v4) generado por la BD.
-    :param datos: Diccionario con nombre, apellido, email, tipo_usuario.
+    :param datos: Diccionario con nombre, apellido, email, tipo_usuario, id_usuario (opcional).
     """
     try:
         import uuid
-        user_uuid = uuid.uuid4()
+        
+        # Si ya viene un id_usuario en los datos (por ejemplo, alineado con Firebase)
+        user_id_raw = datos.get("id_usuario")
+        if user_id_raw:
+            user_uuid = uuid.UUID(str(user_id_raw))
+        else:
+            user_uuid = uuid.uuid4()
+            
         engine = get_engine()
         with engine.connect() as conn:
             # 1. Registrar en la tabla sujeto
