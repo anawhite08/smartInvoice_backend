@@ -207,8 +207,8 @@ def crear_proveedor(datos: dict) -> str | None:
         engine = get_engine()
         with engine.connect() as conn:
             query = text("""
-                INSERT INTO proveedores (rif_proveedor, nombre_proveedor, codigo_sap_proveedor, id_usuario_asignado)
-                VALUES (:rif_proveedor, :nombre_proveedor, :codigo_sap_proveedor, :id_usuario_asignado)
+                INSERT INTO proveedores (rif_proveedor, nombre_proveedor, codigo_sap_proveedor)
+                VALUES (:rif_proveedor, :nombre_proveedor, :codigo_sap_proveedor)
                 RETURNING id_proveedor;
             """)
             result = conn.execute(
@@ -217,39 +217,60 @@ def crear_proveedor(datos: dict) -> str | None:
                     "rif_proveedor": datos.get("rif_proveedor"),
                     "nombre_proveedor": datos.get("nombre_proveedor"),
                     "codigo_sap_proveedor": datos.get("codigo_sap_proveedor"),
-                    "id_usuario_asignado": datos.get("id_usuario_asignado") or None,
                 }
             )
             new_id = result.fetchone()[0]
             conn.commit()
-            return str(new_id)
+            new_id = str(new_id)
+
+        if datos.get("id_usuario_asignado"):
+            asignar_proveedor_usuario(new_id, datos.get("id_usuario_asignado"))
+
+        return new_id
     except Exception as e:
         print(f"❌ Error al crear proveedor: {e}")
         return None
 
 
 # Proveedores, incluyendo el nombre/apellido/email del usuario de Cuentas por Pagar
-# asignado (si tiene uno). Un proveedor sin asignar viene con esos tres campos en null.
+# asignado (si tiene uno), a través de la tabla de relación `responsables_proveedor`.
+# Un proveedor sin asignar viene con esos cuatro campos en null.
 _SELECT_PROVEEDORES = """
     SELECT p.*,
+           rp.id_usuario AS id_usuario_asignado,
            u.nombre AS usuario_asignado_nombre,
            u.apellido AS usuario_asignado_apellido,
            u.email AS usuario_asignado_email
     FROM proveedores p
-    LEFT JOIN usuarios u ON p.id_usuario_asignado = u.id_usuario
+    LEFT JOIN responsables_proveedor rp ON rp.id_proveedor = p.id_proveedor
+    LEFT JOIN usuarios u ON u.id_usuario = rp.id_usuario
 """
 
 
 def get_proveedores() -> list:
+    engine = get_engine()
     try:
-        engine = get_engine()
         with engine.connect() as conn:
             query = text(_SELECT_PROVEEDORES + " ORDER BY p.nombre_proveedor ASC;")
             result = conn.execute(query)
             return [row_to_dict(r) for r in result]
     except Exception as e:
-        print(f"❌ Error al obtener proveedores: {e}")
-        return []
+        # Si la tabla `responsables_proveedor` todavía no existe (migración pendiente),
+        # no dejamos la lista de proveedores en blanco: la devolvemos sin asignación.
+        print(f"⚠️ No se pudo unir con responsables_proveedor, devolviendo proveedores sin asignación: {e}")
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text("SELECT * FROM proveedores ORDER BY nombre_proveedor ASC;"))
+                proveedores = [row_to_dict(r) for r in result]
+                for p in proveedores:
+                    p.setdefault("id_usuario_asignado", None)
+                    p.setdefault("usuario_asignado_nombre", None)
+                    p.setdefault("usuario_asignado_apellido", None)
+                    p.setdefault("usuario_asignado_email", None)
+                return proveedores
+        except Exception as e2:
+            print(f"❌ Error al obtener proveedores: {e2}")
+            return []
 
 
 def get_proveedor_por_id(id_proveedor: str) -> dict | None:
@@ -274,8 +295,7 @@ def actualizar_proveedor(id_proveedor: str, datos: dict) -> bool:
                 UPDATE proveedores
                 SET rif_proveedor = :rif_proveedor,
                     nombre_proveedor = :nombre_proveedor,
-                    codigo_sap_proveedor = :codigo_sap_proveedor,
-                    id_usuario_asignado = :id_usuario_asignado
+                    codigo_sap_proveedor = :codigo_sap_proveedor
                 WHERE id_proveedor = :id_proveedor
             """)
             conn.execute(
@@ -285,13 +305,50 @@ def actualizar_proveedor(id_proveedor: str, datos: dict) -> bool:
                     "rif_proveedor": datos.get("rif_proveedor"),
                     "nombre_proveedor": datos.get("nombre_proveedor"),
                     "codigo_sap_proveedor": datos.get("codigo_sap_proveedor"),
-                    "id_usuario_asignado": datos.get("id_usuario_asignado") or None,
                 }
             )
             conn.commit()
-            return True
+
+        # `id_usuario_asignado` es opcional: solo la tocamos si vino en el payload,
+        # para no desasignar un proveedor por accidente en un PUT que no la incluya.
+        if "id_usuario_asignado" in datos:
+            asignar_proveedor_usuario(id_proveedor, datos.get("id_usuario_asignado"))
+
+        return True
     except Exception as e:
         print(f"❌ Error al actualizar el proveedor {id_proveedor}: {e}")
+        return False
+
+
+def asignar_proveedor_usuario(id_proveedor: str, id_usuario: str | None) -> bool:
+    """
+    Crea/actualiza/borra la fila de `responsables_proveedor` para un proveedor.
+    Un proveedor tiene a lo sumo un responsable (PK en id_proveedor); un mismo
+    usuario puede aparecer en muchas filas (gestiona varios proveedores).
+    Pasar id_usuario=None (o "") desasigna al proveedor.
+    """
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            if not id_usuario:
+                conn.execute(
+                    text("DELETE FROM responsables_proveedor WHERE id_proveedor = :id_proveedor"),
+                    {"id_proveedor": id_proveedor}
+                )
+            else:
+                conn.execute(
+                    text("""
+                        INSERT INTO responsables_proveedor (id_proveedor, id_usuario)
+                        VALUES (:id_proveedor, :id_usuario)
+                        ON CONFLICT (id_proveedor)
+                        DO UPDATE SET id_usuario = EXCLUDED.id_usuario, fecha_asignacion = now();
+                    """),
+                    {"id_proveedor": id_proveedor, "id_usuario": id_usuario}
+                )
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"❌ Error al asignar proveedor {id_proveedor} a usuario {id_usuario}: {e}")
         return False
 
 
@@ -699,8 +756,10 @@ def get_facturas(filtros: dict = None) -> list:
                 params["id_proveedor"] = filtros.get("id_proveedor")
             if filtros.get("id_usuario_asignado"):
                 # Limita la bandeja a las facturas de los proveedores que tiene asignados
-                # el usuario de Cuentas por Pagar autenticado.
-                sql_base += " AND p.id_usuario_asignado = :id_usuario_asignado"
+                # el usuario de Cuentas por Pagar autenticado, vía responsables_proveedor.
+                sql_base += """ AND f.id_proveedor IN (
+                    SELECT id_proveedor FROM responsables_proveedor WHERE id_usuario = :id_usuario_asignado
+                )"""
                 params["id_usuario_asignado"] = filtros.get("id_usuario_asignado")
             if filtros.get("id_sociedad"):
                 sql_base += " AND f.id_sociedad = :id_sociedad"
