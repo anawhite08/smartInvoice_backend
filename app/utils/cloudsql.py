@@ -207,8 +207,8 @@ def crear_proveedor(datos: dict) -> str | None:
         engine = get_engine()
         with engine.connect() as conn:
             query = text("""
-                INSERT INTO proveedores (rif_proveedor, nombre_proveedor, codigo_sap_proveedor)
-                VALUES (:rif_proveedor, :nombre_proveedor, :codigo_sap_proveedor)
+                INSERT INTO proveedores (rif_proveedor, nombre_proveedor, codigo_sap_proveedor, id_usuario_asignado)
+                VALUES (:rif_proveedor, :nombre_proveedor, :codigo_sap_proveedor, :id_usuario_asignado)
                 RETURNING id_proveedor;
             """)
             result = conn.execute(
@@ -217,6 +217,7 @@ def crear_proveedor(datos: dict) -> str | None:
                     "rif_proveedor": datos.get("rif_proveedor"),
                     "nombre_proveedor": datos.get("nombre_proveedor"),
                     "codigo_sap_proveedor": datos.get("codigo_sap_proveedor"),
+                    "id_usuario_asignado": datos.get("id_usuario_asignado") or None,
                 }
             )
             new_id = result.fetchone()[0]
@@ -227,11 +228,23 @@ def crear_proveedor(datos: dict) -> str | None:
         return None
 
 
+# Proveedores, incluyendo el nombre/apellido/email del usuario de Cuentas por Pagar
+# asignado (si tiene uno). Un proveedor sin asignar viene con esos tres campos en null.
+_SELECT_PROVEEDORES = """
+    SELECT p.*,
+           u.nombre AS usuario_asignado_nombre,
+           u.apellido AS usuario_asignado_apellido,
+           u.email AS usuario_asignado_email
+    FROM proveedores p
+    LEFT JOIN usuarios u ON p.id_usuario_asignado = u.id_usuario
+"""
+
+
 def get_proveedores() -> list:
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            query = text("SELECT * FROM proveedores ORDER BY nombre_proveedor ASC;")
+            query = text(_SELECT_PROVEEDORES + " ORDER BY p.nombre_proveedor ASC;")
             result = conn.execute(query)
             return [row_to_dict(r) for r in result]
     except Exception as e:
@@ -243,7 +256,7 @@ def get_proveedor_por_id(id_proveedor: str) -> dict | None:
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            query = text("SELECT * FROM proveedores WHERE id_proveedor = :id_proveedor")
+            query = text(_SELECT_PROVEEDORES + " WHERE p.id_proveedor = :id_proveedor")
             result = conn.execute(query, {"id_proveedor": id_proveedor}).fetchone()
             if result:
                 return row_to_dict(result)
@@ -261,7 +274,8 @@ def actualizar_proveedor(id_proveedor: str, datos: dict) -> bool:
                 UPDATE proveedores
                 SET rif_proveedor = :rif_proveedor,
                     nombre_proveedor = :nombre_proveedor,
-                    codigo_sap_proveedor = :codigo_sap_proveedor
+                    codigo_sap_proveedor = :codigo_sap_proveedor,
+                    id_usuario_asignado = :id_usuario_asignado
                 WHERE id_proveedor = :id_proveedor
             """)
             conn.execute(
@@ -271,6 +285,7 @@ def actualizar_proveedor(id_proveedor: str, datos: dict) -> bool:
                     "rif_proveedor": datos.get("rif_proveedor"),
                     "nombre_proveedor": datos.get("nombre_proveedor"),
                     "codigo_sap_proveedor": datos.get("codigo_sap_proveedor"),
+                    "id_usuario_asignado": datos.get("id_usuario_asignado") or None,
                 }
             )
             conn.commit()
@@ -682,6 +697,11 @@ def get_facturas(filtros: dict = None) -> list:
             if filtros.get("id_proveedor"):
                 sql_base += " AND f.id_proveedor = :id_proveedor"
                 params["id_proveedor"] = filtros.get("id_proveedor")
+            if filtros.get("id_usuario_asignado"):
+                # Limita la bandeja a las facturas de los proveedores que tiene asignados
+                # el usuario de Cuentas por Pagar autenticado.
+                sql_base += " AND p.id_usuario_asignado = :id_usuario_asignado"
+                params["id_usuario_asignado"] = filtros.get("id_usuario_asignado")
             if filtros.get("id_sociedad"):
                 sql_base += " AND f.id_sociedad = :id_sociedad"
                 params["id_sociedad"] = filtros.get("id_sociedad")

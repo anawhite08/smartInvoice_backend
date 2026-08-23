@@ -402,6 +402,7 @@ def rutas_facturas():
             filtros = {
                 "tipo_factura": request.args.get("tipo_factura"),
                 "id_proveedor": request.args.get("id_proveedor"),
+                "id_usuario_asignado": request.args.get("id_usuario_asignado"),
                 "id_sociedad": request.args.get("id_sociedad"),
                 "estado_registro_sap": request.args.get("estado_registro_sap")
             }
