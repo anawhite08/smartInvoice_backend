@@ -15,7 +15,7 @@ TARGET_SERVICE_ACCOUNT = os.getenv("target_service_account")
 PROJECT_ID = os.getenv("proyecto_id")
 LOCATION = os.getenv("ubicacion")
 UNSCANNED_BUCKET_NAME = os.getenv("unscanned_bucket_name", "ordenes_compra")
-GEMINI_MODEL = os.getenv("gemini_model", "gemini-3.1-flash-lite")
+GEMINI_MODEL = os.getenv("gemini_model", "gemini-2.5-flash-lite")
 
 # Importante: Establecer la variable de entorno para que las librerías de Google la detecten automáticamente
 if GOOGLE_APPLICATION_CREDENTIALS:
