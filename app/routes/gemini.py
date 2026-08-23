@@ -124,6 +124,35 @@ REGLAS GENERALES DE EXTRACCIÓN
       - Campos a mapear: 'id_impuesto' (el UUID) y 'codigo_impuesto_sap' que corresponda al porcentaje o descripción.
       - Extrae el porcentaje real de la factura ('porcentaje_impuesto') como número float.
 
+5. DATOS DE CUMPLIMIENTO FISCAL SENIAT (Venezuela):
+   Extrae, únicamente si están legibles en el documento, los siguientes datos adicionales para
+   poder validar si la factura cumple los requisitos fiscales venezolanos. No inventes ni infieras
+   ningún valor — si el dato no aparece explícitamente en el documento, devuelve null (o false
+   para el indicador booleano).
+
+   - "dice_factura": true si el documento tiene impreso literalmente el título/denominación
+     "FACTURA" (o "FACTURA DE VENTA") de forma visible; false si en cambio dice "Nota de Entrega",
+     "Presupuesto", "Proforma", "Recibo", etc.; null si no se puede determinar con certeza.
+   - "domicilio_fiscal_emisor": dirección fiscal completa del proveedor/emisor tal como aparece
+     impresa cerca de su nombre/RIF, o null si no figura.
+   - "domicilio_fiscal_comprador": dirección fiscal completa del cliente/comprador (sociedad
+     receptora) tal como aparece impresa, o null si no figura.
+   - "numero_control": el "Número de Control" (formato típico 00-000000) impreso en la factura,
+     usualmente cerca del número de factura o en el encabezado. NO lo confundas con el número de
+     factura ni con el número de orden de compra (PO). null si no figura.
+   - "datos_imprenta": objeto con los datos de la imprenta autorizada que suele aparecer al pie de
+     la factura (ej. "Fabricado por…", "Imprenta…"):
+       - "rif_imprenta": RIF de la imprenta, o null.
+       - "nombre_imprenta": nombre/razón social de la imprenta, o null.
+       - "fecha_autorizacion": fecha de autorización/aprobación SENIAT de los seriales, en formato
+         YYYY-MM-DD, o null.
+   - "moneda": código de la moneda en que está denominada la factura, ej: "VES", "USD", "EUR". Si
+     no se indica explícitamente, asume "VES".
+   - "tasa_cambio_bcv": si la factura está denominada en divisas (moneda distinta de "VES") y
+     muestra una tasa de cambio BCV del día con su conversión a bolívares, extrae ese valor
+     numérico (tasa en bolívares por unidad de divisa). null si la factura está en VES o si no
+     indica ninguna tasa.
+
 ═══════════════════════════════════════════════
 CATÁLOGOS OFICIALES PARA MAPEO (RESOLUCIÓN DE ENTIDADES)
 ═══════════════════════════════════════════════
@@ -166,7 +195,21 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
   "subtotal": 0.00,
   "iva_monto": 0.00,
   "importe_total": 0.00,
-  
+
+  "datos_fiscales_seniat": {{
+    "dice_factura": true,
+    "domicilio_fiscal_emisor": "Dirección extraída o null",
+    "domicilio_fiscal_comprador": "Dirección extraída o null",
+    "numero_control": "00-000000 o null",
+    "datos_imprenta": {{
+      "rif_imprenta": "RIF o null",
+      "nombre_imprenta": "Nombre o null",
+      "fecha_autorizacion": "YYYY-MM-DD o null"
+    }},
+    "moneda": "VES",
+    "tasa_cambio_bcv": null
+  }},
+
   "detalle_financiero": {{
     "cuenta_contable": "Debe ser null, no estimar ni llenar por defecto",
     "centro_costo": "Debe ser null, no estimar ni llenar por defecto"
