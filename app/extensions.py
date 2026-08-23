@@ -5,7 +5,7 @@ import sqlalchemy
 from google.auth import impersonated_credentials
 from google.cloud import storage
 import google.auth
-from .config import USER_DB, PASSWORD_DB, DB_NAME, DIRECCION, TARGET_SERVICE_ACCOUNT, PROJECT_ID, LOCATION
+from .config import USER_DB, PASSWORD_DB, DB_NAME, DIRECCION, TARGET_SERVICE_ACCOUNT, PROJECT_ID, LOCATION, GEMINI_MODEL
 import vertexai
 from vertexai.generative_models import GenerativeModel
 from google.cloud import documentai
@@ -18,8 +18,9 @@ def cliente_gemini():
    # Inicializa Vertex AI
    vertexai.init(project=PROJECT_ID, location=LOCATION)
 
-   # Cargar el modelo de Gemini disponible en Vertex
-   model = GenerativeModel("gemini-2.5-flash")  
+   # Cargar el modelo de Gemini disponible en Vertex. Configurable vía la variable de
+   # entorno 'gemini_model' (ver app/config.py) para poder cambiar de modelo sin tocar código.
+   model = GenerativeModel(GEMINI_MODEL)
    return model
 
 
