@@ -3,12 +3,12 @@ import re
 import magic
 import mimetypes, filetype # type: ignore
 from flask import Blueprint, request, jsonify
-from vertexai.generative_models import Part
+from google.genai import types
 import json
 import base64
 import uuid
 from app.extensions import cliente_gemini
-from ..config import INVOICES_BUCKET_NAME
+from ..config import INVOICES_BUCKET_NAME, GEMINI_MODEL
 from app.utils.storage import upload_to_storage
 from app.utils.cloudsql import get_proveedores, get_sociedades, get_impuestos
 
@@ -70,7 +70,7 @@ def extract_invoice():
             impuestos = []
 
         # 5. Invocar a Gemini
-        model = cliente_gemini()
+        gemini_client = cliente_gemini()
 
         # Determinar el tipo de contenido
         try:
@@ -230,11 +230,14 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
 """
 
         # Enviar a Gemini
-        response = model.generate_content([
-            Part.from_text(system_instruction),
-            Part.from_text("Extrae la información de esta factura y resuelve las entidades contra los catálogos suministrados."),
-            Part.from_data(file_bytes, mime_type=mime_type)
-        ])
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[
+                system_instruction,
+                "Extrae la información de esta factura y resuelve las entidades contra los catálogos suministrados.",
+                types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
+            ]
+        )
 
         raw_text = response.text.strip()
         

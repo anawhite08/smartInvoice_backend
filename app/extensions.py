@@ -6,22 +6,26 @@ from google.auth import impersonated_credentials
 from google.cloud import storage
 import google.auth
 from .config import USER_DB, PASSWORD_DB, DB_NAME, DIRECCION, TARGET_SERVICE_ACCOUNT, PROJECT_ID, LOCATION, GEMINI_MODEL
-import vertexai
-from vertexai.generative_models import GenerativeModel
+from google import genai
 from google.cloud import documentai
 import json
 
 # ---------------------------------------------------------
 # Cliente del Modelo de Gemini
 # ---------------------------------------------------------
-def cliente_gemini():
-   # Inicializa Vertex AI
-   vertexai.init(project=PROJECT_ID, location=LOCATION)
+# Modelos recientes (ej. gemini-3.1-flash-lite) todavía solo se sirven vía Vertex AI en el
+# endpoint 'global', no en regiones como us-central1 — por eso se fuerza acá, independiente
+# de la LOCATION general usada para el resto de recursos del proyecto (Cloud SQL, Document AI).
+GEMINI_LOCATION = "global"
 
-   # Cargar el modelo de Gemini disponible en Vertex. Configurable vía la variable de
-   # entorno 'gemini_model' (ver app/config.py) para poder cambiar de modelo sin tocar código.
-   model = GenerativeModel(GEMINI_MODEL)
-   return model
+
+def cliente_gemini():
+   """
+   Devuelve un cliente del SDK unificado `google-genai` (reemplaza al `vertexai.generative_models`
+   ya deprecado). El modelo a usar es configurable vía la variable de entorno 'gemini_model'
+   (ver app/config.py) y se pasa en cada llamada a `client.models.generate_content(model=...)`.
+   """
+   return genai.Client(vertexai=True, project=PROJECT_ID, location=GEMINI_LOCATION)
 
 
 # ---------------------------------------------------------

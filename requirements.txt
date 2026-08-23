@@ -4,6 +4,7 @@ gunicorn==23.0.0
 cloud-sql-python-connector[pg8000]==1.13.0
 SQLAlchemy==2.0.35
 google-cloud-aiplatform==1.70.0
+google-genai==2.7.0
 google-cloud-storage==2.19.0
 google-cloud-discoveryengine==0.13.2
 python-dotenv==1.0.1
