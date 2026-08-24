@@ -11,6 +11,8 @@ from app.extensions import cliente_gemini
 from ..config import INVOICES_BUCKET_NAME, GEMINI_MODEL
 from app.utils.storage import upload_to_storage
 from app.utils.cloudsql import get_proveedores, get_sociedades, get_impuestos
+from app.utils.entity_resolution import resolve_entities
+from app.utils.telemetry import record_gemini_usage
 
 gemini_bp = Blueprint("gemini", __name__, url_prefix="/gemini")
 
@@ -58,7 +60,8 @@ def extract_invoice():
             signed_url = f"https://storage.googleapis.com/{INVOICES_BUCKET_NAME}/{file_id}"
             print(f"⚠️ No se pudo generar la URL firmada, usando URL pública por defecto: {sign_err}")
 
-        # 4. Traer los catálogos de referencia de la base de datos
+        # 4. Traer los catálogos de referencia de la base de datos — ya NO se le pasan a Gemini
+        # (encarecía el prompt en tokens); se usan después para resolver entidades en Python.
         try:
             proveedores = get_proveedores() or []
             sociedades = get_sociedades() or []
@@ -83,10 +86,14 @@ def extract_invoice():
                 mime_type, _ = mimetypes.guess_type(file_name)
                 mime_type = mime_type or "application/octet-stream"
 
-        # Formar prompt detallado de instrucción de sistema con los catálogos inyectados
-        system_instruction = f"""Eres un extractor de datos de facturas (tanto Financieras como Logísticas) y un motor de resolución de entidades.
+        # Formar prompt detallado de instrucción de sistema — SIN catálogos inyectados. Gemini
+        # solo extrae texto/números tal como figuran en el documento (nombre, RIF, porcentaje);
+        # la resolución contra la base de datos (IDs, códigos SAP) se hace después en Python
+        # (ver app/utils/entity_resolution.py), lo que evita pagar tokens de entrada por volcar
+        # el catálogo completo de proveedores/sociedades/impuestos en cada llamada.
+        system_instruction = f"""Eres un extractor de datos de facturas (tanto Financieras como Logísticas).
 
-Tu función es extraer los datos clave del documento de factura proporcionado y, al mismo tiempo, realizar la resolución/mapeo de entidades contra los catálogos oficiales de nuestra base de datos.
+Tu función es extraer los datos clave del documento de factura proporcionado, tal como figuran impresos en el papel. NO debes inventar ni asignar identificadores de base de datos — solo transcribir lo que ves.
 
 ═══════════════════════════════════════════════
 REGLAS GENERALES DE EXTRACCIÓN
@@ -103,26 +110,10 @@ REGLAS GENERALES DE EXTRACCIÓN
    - Si no puedes determinar el valor de un campo con base en el documento, devuélvelo como null.
    - Si ves dos unidades de precios, debes tomar el dolar que siempre va representado com $XX donde las x son los numeros, es decir, el signo de dolar siempre va delante de izquierda a derecha.
 
-4. RESOLUCIÓN DE ENTIDADES (MAPEO CON BASE DE DATOS):
-   Para cada entidad, busca la coincidencia más probable en los catálogos adjuntos. Si no hay coincidencia clara o segura, pon null en los campos correspondientes a IDs y códigos.
-
-   A. PROVEEDORES (tabla 'proveedores'):
-      - Identifica el proveedor de la factura (su nombre o RIF / CUIT / Identificación fiscal).
-      - Busca en el catálogo de proveedores suministrado. Encuentra el que coincida por nombre o por RIF.
-      - Campos a mapear: 'id_proveedor' (el UUID de la base de datos) y 'codigo_sap_proveedor' del registro coincidente.
-      - Extrae también de la factura el RIF ('rif_proveedor') y nombre ('nombre_proveedor') reales que figuren en el papel.
-
-   B. SOCIEDAD ADQUIRIENTE (tabla 'sociedades_sap'):
-      - Identifica a qué empresa o sociedad va dirigida la factura (ej: "C.A. Ron Santa Teresa", "C.A Licores de Calidad", "Estación El Consejo", etc.).
-      - Busca en el catálogo de sociedades_sap suministrado.
-      - Campos a mapear: 'id_sociedad' (el UUID) y 'codigo_sociedad_sap' de la sociedad coincidente.
-      - Extrae de la factura el RIF de la sociedad ('rif_sociedad') y nombre de la sociedad ('nombre_sociedad') reales.
-
-   C. TASA DE IMPUESTO (tabla 'codigos_impuesto_sap'):
-      - Identifica el porcentaje de IVA de la factura (ej: 16%, 8%, 0% o exento, etc.).
-      - Busca en el catálogo de codigos_impuesto_sap suministrado.
-      - Campos a mapear: 'id_impuesto' (el UUID) y 'codigo_impuesto_sap' que corresponda al porcentaje o descripción.
-      - Extrae el porcentaje real de la factura ('porcentaje_impuesto') como número float.
+4. IDENTIFICACIÓN DE ENTIDADES (SOLO TEXTO, SIN MAPEAR A BASE DE DATOS):
+   A. PROVEEDOR/EMISOR: extrae su RIF ('rif_proveedor') y nombre o razón social ('nombre_proveedor') reales tal como figuran en el papel.
+   B. SOCIEDAD ADQUIRIENTE/COMPRADOR: extrae el RIF ('rif_sociedad') y nombre ('nombre_sociedad') reales de la empresa a la que va dirigida la factura (ej: "C.A. Ron Santa Teresa", "C.A Licores de Calidad", "Estación El Consejo", etc.).
+   C. IMPUESTO: extrae el porcentaje real de IVA de la factura ('porcentaje_impuesto') como número float (ej: 16%, 8%, 0% o exento -> 0.00).
 
 5. DATOS DE CUMPLIMIENTO FISCAL SENIAT (Venezuela):
    Extrae, únicamente si están legibles en el documento, los siguientes datos adicionales para
@@ -154,44 +145,25 @@ REGLAS GENERALES DE EXTRACCIÓN
      indica ninguna tasa.
 
 ═══════════════════════════════════════════════
-CATÁLOGOS OFICIALES PARA MAPEO (RESOLUCIÓN DE ENTIDADES)
-═══════════════════════════════════════════════
-
---- CATALOGO DE PROVEEDORES ---
-{json.dumps(proveedores, indent=2, ensure_ascii=False, default=str)}
-
---- CATALOGO DE SOCIEDADES SAP ---
-{json.dumps(sociedades, indent=2, ensure_ascii=False, default=str)}
-
---- CATALOGO DE CÓDIGOS DE IMPUESTO SAP ---
-{json.dumps(impuestos, indent=2, ensure_ascii=False, default=str)}
-
-═══════════════════════════════════════════════
 ESQUEMA JSON DE SALIDA REQUERIDO
 ═══════════════════════════════════════════════
-Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructura. No incluyas bloques de código markdown, explicaciones ni texto adicional. El JSON debe comenzar con {{ y terminar con }}.
+Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructura. No incluyas bloques de código markdown, explicaciones ni texto adicional. El JSON debe comenzar con {{ y terminar con }}. No incluyas ningún campo de tipo "id_..." ni "codigo_...": esos se completan después, no son parte de tu tarea.
 
 {{
   "tipo_factura": "Logistica" o "Financiera",
-  
-  "id_proveedor": "UUID mapeado o null",
+
   "rif_proveedor": "RIF extraído de la factura, ej: J-31641286-5",
   "nombre_proveedor": "Nombre extraído de la factura",
-  "codigo_sap_proveedor": "Código SAP mapeado o null",
-  
-  "id_sociedad": "UUID mapeado o null",
+
   "rif_sociedad": "RIF de sociedad extraído, ej: J-00032569-3",
   "nombre_sociedad": "Nombre de la sociedad receptora",
-  "codigo_sociedad_sap": "Código SAP mapeado o null",
-  
+
   "numero_factura": "Número de factura extraído",
   "fecha_factura": "Fecha de factura en formato YYYY-MM-DD o null",
   "fecha_vencimiento": "Fecha de vencimiento en formato YYYY-MM-DD o null",
-  
-  "id_impuesto": "UUID del impuesto mapeado o null",
-  "codigo_impuesto_sap": "Código SAP de impuesto mapeado o null",
+
   "porcentaje_impuesto": 16.00,
-  
+
   "subtotal": 0.00,
   "iva_monto": 0.00,
   "importe_total": 0.00,
@@ -234,13 +206,16 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
             model=GEMINI_MODEL,
             contents=[
                 system_instruction,
-                "Extrae la información de esta factura y resuelve las entidades contra los catálogos suministrados.",
+                "Extrae la información de esta factura tal como figura impresa en el documento.",
                 types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
             ]
         )
 
+        # Telemetría: cuántos tokens costó esta extracción (entrada texto/imagen y salida).
+        record_gemini_usage(getattr(response, "usage_metadata", None), GEMINI_MODEL)
+
         raw_text = response.text.strip()
-        
+
         # Limpiar bloques markdown si existieran (```json ... ```)
         clean_text = re.sub(r"^```json|```$", "", raw_text, flags=re.MULTILINE).strip()
 
@@ -253,6 +228,11 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
                 "error": "No se pudo estructurar el análisis de Gemini como un objeto JSON válido.",
                 "raw_response": raw_text
             }), 500
+
+        # Resolución de entidades en Python: Gemini solo devolvió nombre/RIF/porcentaje en
+        # texto plano, acá se completan id_proveedor/codigo_sap_proveedor, id_sociedad/
+        # codigo_sociedad_sap e id_impuesto/codigo_impuesto_sap contra los catálogos reales.
+        extracted_info = resolve_entities(extracted_info, proveedores, sociedades, impuestos)
 
         # Respuesta final exitosa
         return jsonify({
