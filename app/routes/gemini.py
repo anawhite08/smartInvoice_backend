@@ -116,6 +116,12 @@ REGLAS GENERALES DE EXTRACCIÓN
      costo explícitos (poco común). Nunca inventes ni estimes una cuenta contable que no esté
      escrita en el papel — en la gran mayoría de los casos esta lista debe quedar vacía ([]), y
      eso es lo correcto.
+   - IMPORTANTE — "cuenta_contable" y "centro_costo" son SIEMPRE el CÓDIGO corto (numérico o
+     alfanumérico, ej. "610000005", "30311"), NUNCA el nombre/descripción que lo acompañe en el
+     documento. Si una fila muestra código y nombre juntos (ej. "30311 Gerencia de Proyectos
+     Mantenimiento y Ambiente"), extrae solo "30311" — el nombre descriptivo se descarta, no se
+     concatena ni se guarda en ningún campo. Esta misma regla aplica en TODO el documento, incluida
+     la regla 9 (hoja de ruta) y la regla 10 (distribución de CeCo por porcentaje) más abajo.
 
 5. IDENTIFICACIÓN DE ENTIDADES (SOLO TEXTO, SIN MAPEAR A BASE DE DATOS):
    A. PROVEEDOR/EMISOR: extrae su RIF ('rif_proveedor') y nombre o razón social ('nombre_proveedor') reales tal como figuran en el papel.
