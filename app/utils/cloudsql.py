@@ -650,14 +650,14 @@ def crear_factura_completa(datos: dict) -> str | None:
                         fecha_factura, importe_total, id_impuesto, id_estado_factura,
                         documento_sap_generado, esporadico, nombre_proveedor_esporadico,
                         rif_proveedor_esporadico, orden_co, origen_documento_id,
-                        tipo_servicio_islr
+                        tipo_servicio_islr, numero_control
                     )
                     VALUES (
                         :id_factura, :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura,
                         :fecha_factura, :importe_total, :id_impuesto, :id_estado_factura,
                         :documento_sap_generado, :esporadico, :nombre_proveedor_esporadico,
                         :rif_proveedor_esporadico, :orden_co, :origen_documento_id,
-                        :tipo_servicio_islr
+                        :tipo_servicio_islr, :numero_control
                     )
                     RETURNING id_factura;
                 """)
@@ -678,6 +678,7 @@ def crear_factura_completa(datos: dict) -> str | None:
                     "orden_co": datos.get("orden_co"),
                     "origen_documento_id": datos.get("origen_documento_id"),
                     "tipo_servicio_islr": datos.get("tipo_servicio_islr"),
+                    "numero_control": datos.get("numero_control"),
                 }
             else:
                 query_cabecera = text("""
@@ -686,14 +687,14 @@ def crear_factura_completa(datos: dict) -> str | None:
                         fecha_factura, importe_total, id_impuesto, id_estado_factura,
                         documento_sap_generado, esporadico, nombre_proveedor_esporadico,
                         rif_proveedor_esporadico, orden_co, origen_documento_id,
-                        tipo_servicio_islr
+                        tipo_servicio_islr, numero_control
                     )
                     VALUES (
                         :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura,
                         :fecha_factura, :importe_total, :id_impuesto, :id_estado_factura,
                         :documento_sap_generado, :esporadico, :nombre_proveedor_esporadico,
                         :rif_proveedor_esporadico, :orden_co, :origen_documento_id,
-                        :tipo_servicio_islr
+                        :tipo_servicio_islr, :numero_control
                     )
                     RETURNING id_factura;
                 """)
@@ -713,6 +714,7 @@ def crear_factura_completa(datos: dict) -> str | None:
                     "orden_co": datos.get("orden_co"),
                     "origen_documento_id": datos.get("origen_documento_id"),
                     "tipo_servicio_islr": datos.get("tipo_servicio_islr"),
+                    "numero_control": datos.get("numero_control"),
                 }
             
             result_cabecera = conn.execute(query_cabecera, params)
@@ -874,7 +876,7 @@ def get_facturas(filtros: dict = None) -> list:
                    f.fecha_factura, f.importe_total, f.id_impuesto, f.documento_sap_generado,
                    f.fecha_creacion, f.id_estado_factura,
                    f.esporadico, f.nombre_proveedor_esporadico, f.rif_proveedor_esporadico,
-                   f.orden_co, f.origen_documento_id, f.tipo_servicio_islr,
+                   f.orden_co, f.origen_documento_id, f.tipo_servicio_islr, f.numero_control,
                    ef.nombre_estado AS estado_registro_sap,
                    p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor,
                    s.nombre_sociedad, s.rif_sociedad, s.codigo_sociedad_sap,
@@ -934,7 +936,7 @@ def get_factura_completa_por_id(id_factura: str) -> dict | None:
                    f.fecha_factura, f.importe_total, f.id_impuesto, f.documento_sap_generado,
                    f.fecha_creacion, f.id_estado_factura,
                    f.esporadico, f.nombre_proveedor_esporadico, f.rif_proveedor_esporadico,
-                   f.orden_co, f.origen_documento_id, f.tipo_servicio_islr,
+                   f.orden_co, f.origen_documento_id, f.tipo_servicio_islr, f.numero_control,
                    ef.nombre_estado AS estado_registro_sap,
                    p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor, p.categoria AS categoria_proveedor,
                    s.nombre_sociedad, s.rif_sociedad, s.codigo_sociedad_sap,
@@ -1091,7 +1093,7 @@ def actualizar_factura_completa(id_factura: str, datos: dict) -> bool:
 
             for campo in ("id_sociedad", "numero_factura", "fecha_factura", "importe_total",
                           "id_impuesto", "documento_sap_generado", "orden_co", "origen_documento_id",
-                          "tipo_servicio_islr"):
+                          "tipo_servicio_islr", "numero_control"):
                 if campo in datos:
                     set_clauses.append(f"{campo} = :{campo}")
                     params_update[campo] = datos.get(campo)

@@ -132,7 +132,9 @@ REGLAS GENERALES DE EXTRACCIÓN
    Extrae, únicamente si están legibles en el documento, los siguientes datos adicionales para
    poder validar si la factura cumple los requisitos fiscales venezolanos. No inventes ni infieras
    ningún valor — si el dato no aparece explícitamente en el documento, devuelve null (o false
-   para el indicador booleano).
+   para el indicador booleano). De estos campos, "numero_control" es especialmente importante —
+   revisa con cuidado el encabezado de la factura antes de devolverlo null; casi todas las
+   facturas venezolanas lo traen impreso, aunque a veces en letra pequeña o junto a otros números.
 
    - "dice_factura": true si el documento tiene impreso literalmente el título/denominación
      "FACTURA" (o "FACTURA DE VENTA") de forma visible; false si en cambio dice "Nota de Entrega",
@@ -249,7 +251,6 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
 
   "numero_factura": "Número de factura extraído",
   "fecha_factura": "Fecha de factura en formato YYYY-MM-DD o null",
-  "fecha_vencimiento": "Fecha de vencimiento en formato YYYY-MM-DD o null",
 
   "porcentaje_impuesto": 16.00,
 
