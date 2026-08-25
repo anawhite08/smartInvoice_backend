@@ -794,6 +794,29 @@ def crear_factura_completa(datos: dict) -> str | None:
                         }
                     )
 
+            # Distribución de CeCo por porcentaje (Corpoelec y similares): dato crudo (% tal
+            # como está impreso), separado de las imputaciones ya calculadas — el cálculo
+            # monto = % × importe_total de ESTE registro se hace en el frontend (Etapa C del
+            # pipeline) antes de armar el payload; acá solo se persiste el detalle crudo.
+            distribucion_ceco_pct = datos.get("distribucion_ceco_pct") or []
+            if not isinstance(distribucion_ceco_pct, list):
+                raise ValueError("'distribucion_ceco_pct' debe ser una lista")
+
+            if distribucion_ceco_pct:
+                query_dist_pct = text("""
+                    INSERT INTO facturas_distribucion_ceco_pct (id_factura, centro_costo, porcentaje)
+                    VALUES (:id_factura, :centro_costo, :porcentaje);
+                """)
+                for renglon in distribucion_ceco_pct:
+                    conn.execute(
+                        query_dist_pct,
+                        {
+                            "id_factura": str_id_factura,
+                            "centro_costo": renglon.get("centro_costo"),
+                            "porcentaje": float(renglon.get("porcentaje") or 0),
+                        }
+                    )
+
             if tipo_factura == "Logistica":
                 items = datos.get("items")
                 if items is not None:
@@ -979,6 +1002,17 @@ def get_factura_completa_por_id(id_factura: str) -> dict | None:
             result_islr = conn.execute(text(sql_islr), {"id_factura": id_factura})
             factura["retenciones_islr"] = [row_to_dict(r) for r in result_islr]
 
+            # Distribución de CeCo por porcentaje (Corpoelec y similares) — dato crudo, separado
+            # de las imputaciones ya calculadas contra el importe_total de este registro.
+            sql_dist_pct = """
+                SELECT id_detalle, centro_costo, porcentaje
+                FROM facturas_distribucion_ceco_pct
+                WHERE id_factura = :id_factura
+                ORDER BY centro_costo ASC;
+            """
+            result_dist_pct = conn.execute(text(sql_dist_pct), {"id_factura": id_factura})
+            factura["distribucion_ceco_pct"] = [row_to_dict(r) for r in result_dist_pct]
+
             if tipo_factura == "Logistica":
                 sql_items = "SELECT * FROM facturas_logisticas_items WHERE id_factura = :id_factura ORDER BY posicion_item ASC;"
                 result_items = conn.execute(text(sql_items), {"id_factura": id_factura})
@@ -1156,6 +1190,32 @@ def actualizar_factura_completa(id_factura: str, datos: dict) -> bool:
                                 "id_factura": id_factura,
                                 "id_impuesto_islr": ret.get("id_impuesto_islr"),
                                 "monto": float(ret.get("monto") or 0),
+                            }
+                        )
+
+            # Distribución de CeCo por porcentaje: mismo criterio de reemplazo total, solo si el
+            # payload trae la clave 'distribucion_ceco_pct'.
+            if "distribucion_ceco_pct" in datos:
+                distribucion_ceco_pct = datos.get("distribucion_ceco_pct") or []
+                if not isinstance(distribucion_ceco_pct, list):
+                    raise ValueError("'distribucion_ceco_pct' debe ser una lista")
+
+                conn.execute(
+                    text("DELETE FROM facturas_distribucion_ceco_pct WHERE id_factura = :id_factura;"),
+                    {"id_factura": id_factura}
+                )
+                if distribucion_ceco_pct:
+                    query_dist_pct = text("""
+                        INSERT INTO facturas_distribucion_ceco_pct (id_factura, centro_costo, porcentaje)
+                        VALUES (:id_factura, :centro_costo, :porcentaje);
+                    """)
+                    for renglon in distribucion_ceco_pct:
+                        conn.execute(
+                            query_dist_pct,
+                            {
+                                "id_factura": id_factura,
+                                "centro_costo": renglon.get("centro_costo"),
+                                "porcentaje": float(renglon.get("porcentaje") or 0),
                             }
                         )
 

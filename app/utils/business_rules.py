@@ -8,9 +8,10 @@ ya resuelto por `resolve_entities()`. Se ejecuta después de esa resolución, en
 CODIGO_IMPUESTO_AGENCIA_VIAJE = "C5"  # IVA 8% — ver codigos_impuesto_sap
 
 # Caso 6 — Publicidad: cuentas contables de gasto de publicidad que SIEMPRE requieren una orden
-# CO de SAP asociada. Lista de 19 cuentas provista por el cliente (Anexo). Solo aplica a facturas
-# Logísticas (aclarado explícitamente por el cliente: "solo aplica para ese tipo de logísticas,
-# el resto no aplica, es un caso particular de las de logísticas").
+# CO de SAP asociada. Lista de 19 cuentas provista por el cliente (Anexo). Originalmente se
+# restringía a facturas Logísticas, pero ejemplos reales (ej. honorarios de influenciador) usan
+# estas mismas cuentas en facturas que Gemini clasifica como Financiera — la señal real es la
+# cuenta contable usada, no el tipo de factura.
 CUENTAS_PUBLICIDAD_ORDEN_CO = {
     "610000010",  # VALLAS PUBLICITARIAS
     "610000020",  # RADIO TELEVISIÓN CINE
@@ -61,10 +62,9 @@ def es_transporte(matched_prov: dict | None) -> bool:
 def requiere_orden_co(tipo_factura: str | None, imputaciones: list) -> bool:
     """
     Devuelve True si alguno de los renglones de distribución contable usa una cuenta de
-    publicidad de la lista de 19 — solo relevante para facturas Logísticas.
+    publicidad de la lista de 19 — sin importar el tipo de factura (ver nota arriba).
+    El parámetro `tipo_factura` se conserva por compatibilidad de firma, no se usa.
     """
-    if tipo_factura != "Logistica":
-        return False
     return any(
         (imp.get("cuenta_contable") or "").strip() in CUENTAS_PUBLICIDAD_ORDEN_CO
         for imp in (imputaciones or [])
