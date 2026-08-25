@@ -744,17 +744,20 @@ def crear_factura_completa(datos: dict) -> str | None:
                         }
                     )
 
-            # Caso 2 — Hoja de ruta (fletes): lista de renglones destino/monto, igual criterio que
-            # 'imputaciones' — opcional, 0 renglones es válido (normalmente se completa DESPUÉS
-            # del guardado inicial, vía InvoiceDetailWorkspace, no bloquea la creación aquí).
+            # Caso 2/8 — Hoja de ruta (fletes/transporte): lista de renglones destino/monto/CeCo,
+            # igual criterio que 'imputaciones' — opcional, 0 renglones es válido. Ahora puede
+            # venir ya poblada desde la extracción de Gemini (tabla de servicios con CeCo por
+            # fila) o completarse después vía InvoiceDetailWorkspace — nunca bloquea la creación.
             hoja_ruta = datos.get("hoja_ruta") or []
             if not isinstance(hoja_ruta, list):
                 raise ValueError("'hoja_ruta' debe ser una lista")
 
             if hoja_ruta:
                 query_hoja_ruta = text("""
-                    INSERT INTO facturas_hoja_ruta (id_factura, destino, monto)
-                    VALUES (:id_factura, :destino, :monto);
+                    INSERT INTO facturas_hoja_ruta
+                        (id_factura, destino, monto, centro_costo, fecha_servicio, numero_planilla)
+                    VALUES
+                        (:id_factura, :destino, :monto, :centro_costo, :fecha_servicio, :numero_planilla);
                 """)
                 for tramo in hoja_ruta:
                     conn.execute(
@@ -763,6 +766,9 @@ def crear_factura_completa(datos: dict) -> str | None:
                             "id_factura": str_id_factura,
                             "destino": tramo.get("destino"),
                             "monto": float(tramo.get("monto") or 0),
+                            "centro_costo": tramo.get("centro_costo"),
+                            "fecha_servicio": tramo.get("fecha_servicio"),
+                            "numero_planilla": tramo.get("numero_planilla"),
                         }
                     )
 
@@ -944,13 +950,14 @@ def get_factura_completa_por_id(id_factura: str) -> dict | None:
                 and requiere_orden_co(tipo_factura, factura["imputaciones"])
             )
 
-            # Caso 2 — Fletes: hoja de ruta (destino/monto por tramo), poblada normalmente
-            # DESPUÉS del guardado inicial vía InvoiceDetailWorkspace — no bloquea el registro.
+            # Caso 2/8 — Fletes/transporte: hoja de ruta (destino/monto/CeCo por tramo), puede
+            # venir de la extracción de Gemini o completarse DESPUÉS del guardado inicial vía
+            # InvoiceDetailWorkspace — no bloquea el registro.
             sql_hoja_ruta = """
-                SELECT id_detalle, destino, monto
+                SELECT id_detalle, destino, monto, centro_costo, fecha_servicio, numero_planilla
                 FROM facturas_hoja_ruta
                 WHERE id_factura = :id_factura
-                ORDER BY destino ASC;
+                ORDER BY fecha_servicio ASC NULLS LAST, destino ASC;
             """
             result_hoja_ruta = conn.execute(text(sql_hoja_ruta), {"id_factura": id_factura})
             factura["hoja_ruta"] = [row_to_dict(r) for r in result_hoja_ruta]
@@ -1108,8 +1115,10 @@ def actualizar_factura_completa(id_factura: str, datos: dict) -> bool:
                 )
                 if hoja_ruta:
                     query_hr = text("""
-                        INSERT INTO facturas_hoja_ruta (id_factura, destino, monto)
-                        VALUES (:id_factura, :destino, :monto);
+                        INSERT INTO facturas_hoja_ruta
+                            (id_factura, destino, monto, centro_costo, fecha_servicio, numero_planilla)
+                        VALUES
+                            (:id_factura, :destino, :monto, :centro_costo, :fecha_servicio, :numero_planilla);
                     """)
                     for tramo in hoja_ruta:
                         conn.execute(
@@ -1118,6 +1127,9 @@ def actualizar_factura_completa(id_factura: str, datos: dict) -> bool:
                                 "id_factura": id_factura,
                                 "destino": tramo.get("destino"),
                                 "monto": float(tramo.get("monto") or 0),
+                                "centro_costo": tramo.get("centro_costo"),
+                                "fecha_servicio": tramo.get("fecha_servicio"),
+                                "numero_planilla": tramo.get("numero_planilla"),
                             }
                         )
 

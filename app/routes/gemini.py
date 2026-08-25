@@ -187,6 +187,27 @@ REGLAS GENERALES DE EXTRACCIÓN
      contra el catálogo de impuestos en el backend, tú solo describes el servicio.
    - Si no puedes determinar razonablemente el tipo de servicio, devuelve null.
 
+9. HOJA DE RUTA CON CENTRO DE COSTO POR TRAMO ('hoja_ruta'):
+   - Algunos proveedores de transporte (ej. taxis, flotas) adjuntan una tabla detallada de
+     servicios/viajes — común bajo títulos como "Relación de Servicios de Taxi" o similar,
+     frecuentemente en una segunda página del documento — con una fila por servicio: fecha,
+     número de planilla, descripción del servicio/recorrido, monto, y su propio Centro de Costo
+     (CeCo). A lo largo de toda la tabla suele repetirse un mismo CeCo o alternar entre 1-2 CeCo
+     distintos — eso es normal, cada fila lleva el CeCo que tenga impreso, sin combinarlos.
+   - Si el documento trae esa tabla, extrae CADA fila tal como está impresa (no resumas ni
+     omitas filas, aunque la tabla sea larga) dentro de "hoja_ruta.tramos". Si además el
+     documento indica una cuenta contable única aplicable a todos los tramos, cópiala en
+     "hoja_ruta.cuenta_contable"; si no la indica, déjala en null.
+   - Si el documento NO trae esa tabla de servicios con CeCo por fila (la gran mayoría de las
+     facturas), "hoja_ruta" completo debe ser el valor null — no un objeto con "tramos": [].
+   - Nunca inventes un CeCo, fecha o número de planilla que no esté impreso — usa null en el
+     campo correspondiente de esa fila si falta.
+   - Cuando SÍ aplica, "hoja_ruta" es un objeto con exactamente estas claves: "cuenta_contable"
+     (string o null) y "tramos" (lista de objetos, cada uno con "fecha_servicio" en formato
+     YYYY-MM-DD o null, "numero_planilla" string o null, "descripcion" string, "monto" number,
+     "centro_costo" string o null). Cuando NO aplica, "hoja_ruta" debe ser exactamente el valor
+     null, no un objeto con "tramos": [].
+
 ═══════════════════════════════════════════════
 ESQUEMA JSON DE SALIDA REQUERIDO
 ═══════════════════════════════════════════════
@@ -236,6 +257,8 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
   "tercero": null,
 
   "tipo_servicio_islr": "Descripción breve del tipo de servicio (ver regla 8), o null",
+
+  "hoja_ruta": null,
 
   "items": [
     {{
