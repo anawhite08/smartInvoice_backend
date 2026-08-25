@@ -10,6 +10,8 @@ Mismo criterio que ya usa el frontend como respaldo (ver
 de una tolerancia.
 """
 
+from .business_rules import apply_business_rules
+
 TAX_PERCENTAGE_TOLERANCE = 0.1
 
 
@@ -77,5 +79,10 @@ def resolve_entities(extracted_info: dict, proveedores: list, sociedades: list, 
     matched_tax = _match_by_percentage(extracted_info.get("porcentaje_impuesto"), impuestos)
     extracted_info["id_impuesto"] = matched_tax.get("id_impuesto") if matched_tax else None
     extracted_info["codigo_impuesto_sap"] = matched_tax.get("codigo_impuesto_sap") if matched_tax else None
+
+    # Reglas de negocio de los casos especiales (Anexos) que dependen del proveedor resuelto,
+    # ej. Caso 3: agencias de viaje siempre van con IVA 8% (C5), sin importar lo que haya
+    # extraído Gemini del documento.
+    extracted_info = apply_business_rules(extracted_info, matched_prov, impuestos)
 
     return extracted_info

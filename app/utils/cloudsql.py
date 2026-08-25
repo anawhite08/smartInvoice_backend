@@ -3,6 +3,7 @@ from ..extensions import get_engine
 import uuid
 from datetime import datetime, date
 import decimal
+from .business_rules import requiere_orden_co, es_transporte
 
 
 # Helper para serializar filas de SQLAlchemy que contienen UUIDs, Fechas y Decimals
@@ -207,8 +208,8 @@ def crear_proveedor(datos: dict) -> str | None:
         engine = get_engine()
         with engine.connect() as conn:
             query = text("""
-                INSERT INTO proveedores (rif_proveedor, nombre_proveedor, codigo_sap_proveedor)
-                VALUES (:rif_proveedor, :nombre_proveedor, :codigo_sap_proveedor)
+                INSERT INTO proveedores (rif_proveedor, nombre_proveedor, codigo_sap_proveedor, categoria)
+                VALUES (:rif_proveedor, :nombre_proveedor, :codigo_sap_proveedor, :categoria)
                 RETURNING id_proveedor;
             """)
             result = conn.execute(
@@ -217,6 +218,7 @@ def crear_proveedor(datos: dict) -> str | None:
                     "rif_proveedor": datos.get("rif_proveedor"),
                     "nombre_proveedor": datos.get("nombre_proveedor"),
                     "codigo_sap_proveedor": datos.get("codigo_sap_proveedor"),
+                    "categoria": datos.get("categoria"),
                 }
             )
             new_id = result.fetchone()[0]
@@ -295,7 +297,8 @@ def actualizar_proveedor(id_proveedor: str, datos: dict) -> bool:
                 UPDATE proveedores
                 SET rif_proveedor = :rif_proveedor,
                     nombre_proveedor = :nombre_proveedor,
-                    codigo_sap_proveedor = :codigo_sap_proveedor
+                    codigo_sap_proveedor = :codigo_sap_proveedor,
+                    categoria = :categoria
                 WHERE id_proveedor = :id_proveedor
             """)
             conn.execute(
@@ -305,6 +308,7 @@ def actualizar_proveedor(id_proveedor: str, datos: dict) -> bool:
                     "rif_proveedor": datos.get("rif_proveedor"),
                     "nombre_proveedor": datos.get("nombre_proveedor"),
                     "codigo_sap_proveedor": datos.get("codigo_sap_proveedor"),
+                    "categoria": datos.get("categoria"),
                 }
             )
             conn.commit()
@@ -584,6 +588,24 @@ def get_id_estado_por_nombre(conn, nombre: str) -> str:
     raise ValueError("No se pudieron cargar los estados en la base de datos.")
 
 
+def get_id_proveedor_esporadico(conn) -> str:
+    """
+    Devuelve el id_proveedor de la fila centinela (codigo_sap_proveedor = '40005') usada para
+    facturas de proveedores esporádicos (Caso 7) — id_proveedor de `facturas` sigue NOT NULL,
+    así que estas facturas apuntan aquí en vez de a un proveedor real del catálogo, y el nombre/
+    RIF real extraído del documento se guarda aparte en
+    facturas.nombre_proveedor_esporadico/rif_proveedor_esporadico.
+    """
+    res = conn.execute(
+        text("SELECT id_proveedor FROM proveedores WHERE codigo_sap_proveedor = '40005';")
+    ).fetchone()
+    if not res:
+        raise ValueError(
+            "No existe el proveedor centinela de esporádicos (codigo_sap_proveedor='40005') en la BD."
+        )
+    return str(res[0])
+
+
 def crear_factura_completa(datos: dict) -> str | None:
     """
     Crea una factura y su respectivo detalle (Financiero o Logístico) de manera transaccional.
@@ -601,26 +623,48 @@ def crear_factura_completa(datos: dict) -> str | None:
                 texto_estado = datos.get("estado_registro_sap", "Pendiente Revision")
                 id_estado = get_id_estado_por_nombre(conn, texto_estado)
 
+            # 1b. Caso 7 — Proveedor esporádico: si el analista lo marcó así, el proveedor real
+            # no está en el catálogo SAP. id_proveedor apunta al centinela '40005' (así los JOIN
+            # existentes de get_facturas/get_factura_completa_por_id no cambian) y el nombre/RIF
+            # tal como los tecleó el analista se guardan aparte.
+            esporadico = bool(datos.get("esporadico"))
+            if esporadico:
+                nombre_esp = datos.get("nombre_proveedor_esporadico")
+                rif_esp = datos.get("rif_proveedor_esporadico")
+                if not nombre_esp or not rif_esp:
+                    raise ValueError(
+                        "'nombre_proveedor_esporadico' y 'rif_proveedor_esporadico' son obligatorios cuando esporadico=true"
+                    )
+                id_proveedor_final = get_id_proveedor_esporadico(conn)
+            else:
+                nombre_esp = None
+                rif_esp = None
+                id_proveedor_final = datos.get("id_proveedor")
+
             # 2. Insertar la cabecera de la factura
             id_factura_custom = datos.get("id_factura")
             if id_factura_custom:
                 query_cabecera = text("""
                     INSERT INTO facturas (
-                        id_factura, tipo_factura, id_proveedor, id_sociedad, numero_factura, 
-                        fecha_factura, importe_total, id_impuesto, id_estado_factura, 
-                        documento_sap_generado
+                        id_factura, tipo_factura, id_proveedor, id_sociedad, numero_factura,
+                        fecha_factura, importe_total, id_impuesto, id_estado_factura,
+                        documento_sap_generado, esporadico, nombre_proveedor_esporadico,
+                        rif_proveedor_esporadico, orden_co, origen_documento_id,
+                        tipo_servicio_islr
                     )
                     VALUES (
-                        :id_factura, :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura, 
-                        :fecha_factura, :importe_total, :id_impuesto, :id_estado_factura, 
-                        :documento_sap_generado
+                        :id_factura, :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura,
+                        :fecha_factura, :importe_total, :id_impuesto, :id_estado_factura,
+                        :documento_sap_generado, :esporadico, :nombre_proveedor_esporadico,
+                        :rif_proveedor_esporadico, :orden_co, :origen_documento_id,
+                        :tipo_servicio_islr
                     )
                     RETURNING id_factura;
                 """)
                 params = {
                     "id_factura": id_factura_custom,
                     "tipo_factura": tipo_factura,
-                    "id_proveedor": datos.get("id_proveedor"),
+                    "id_proveedor": id_proveedor_final,
                     "id_sociedad": datos.get("id_sociedad"),
                     "numero_factura": datos.get("numero_factura"),
                     "fecha_factura": datos.get("fecha_factura"),
@@ -628,24 +672,34 @@ def crear_factura_completa(datos: dict) -> str | None:
                     "id_impuesto": datos.get("id_impuesto"),
                     "id_estado_factura": id_estado,
                     "documento_sap_generado": datos.get("documento_sap_generado"),
+                    "esporadico": esporadico,
+                    "nombre_proveedor_esporadico": nombre_esp,
+                    "rif_proveedor_esporadico": rif_esp,
+                    "orden_co": datos.get("orden_co"),
+                    "origen_documento_id": datos.get("origen_documento_id"),
+                    "tipo_servicio_islr": datos.get("tipo_servicio_islr"),
                 }
             else:
                 query_cabecera = text("""
                     INSERT INTO facturas (
-                        tipo_factura, id_proveedor, id_sociedad, numero_factura, 
-                        fecha_factura, importe_total, id_impuesto, id_estado_factura, 
-                        documento_sap_generado
+                        tipo_factura, id_proveedor, id_sociedad, numero_factura,
+                        fecha_factura, importe_total, id_impuesto, id_estado_factura,
+                        documento_sap_generado, esporadico, nombre_proveedor_esporadico,
+                        rif_proveedor_esporadico, orden_co, origen_documento_id,
+                        tipo_servicio_islr
                     )
                     VALUES (
-                        :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura, 
-                        :fecha_factura, :importe_total, :id_impuesto, :id_estado_factura, 
-                        :documento_sap_generado
+                        :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura,
+                        :fecha_factura, :importe_total, :id_impuesto, :id_estado_factura,
+                        :documento_sap_generado, :esporadico, :nombre_proveedor_esporadico,
+                        :rif_proveedor_esporadico, :orden_co, :origen_documento_id,
+                        :tipo_servicio_islr
                     )
                     RETURNING id_factura;
                 """)
                 params = {
                     "tipo_factura": tipo_factura,
-                    "id_proveedor": datos.get("id_proveedor"),
+                    "id_proveedor": id_proveedor_final,
                     "id_sociedad": datos.get("id_sociedad"),
                     "numero_factura": datos.get("numero_factura"),
                     "fecha_factura": datos.get("fecha_factura"),
@@ -653,37 +707,93 @@ def crear_factura_completa(datos: dict) -> str | None:
                     "id_impuesto": datos.get("id_impuesto"),
                     "id_estado_factura": id_estado,
                     "documento_sap_generado": datos.get("documento_sap_generado"),
+                    "esporadico": esporadico,
+                    "nombre_proveedor_esporadico": nombre_esp,
+                    "rif_proveedor_esporadico": rif_esp,
+                    "orden_co": datos.get("orden_co"),
+                    "origen_documento_id": datos.get("origen_documento_id"),
+                    "tipo_servicio_islr": datos.get("tipo_servicio_islr"),
                 }
             
             result_cabecera = conn.execute(query_cabecera, params)
             id_factura = result_cabecera.fetchone()[0]
             str_id_factura = str(id_factura)
 
-            # 3. Insertar los detalles según el tipo de factura
-            if tipo_factura == "Financiera":
-                detalle_financiero = datos.get("detalle_financiero")
-                if not detalle_financiero:
-                    raise ValueError("Se requiere 'detalle_financiero' para facturas Financieras")
-                
-                query_financiero = text("""
-                    INSERT INTO facturas_financieras_detalle (id_factura, cuenta_contable, centro_costo)
-                    VALUES (:id_factura, :cuenta_contable, :centro_costo);
-                """)
-                conn.execute(
-                    query_financiero,
-                    {
-                        "id_factura": str_id_factura,
-                        "cuenta_contable": detalle_financiero.get("cuenta_contable"),
-                        "centro_costo": detalle_financiero.get("centro_costo")
-                    }
-                )
+            # 3. Insertar la distribución contable (imputaciones): lista de renglones
+            # cuenta_contable/centro_costo/monto, disponible para AMBOS tipos de factura (no
+            # solo Financiera — algunas Logísticas también la llevan, ej. publicidad con orden
+            # CO). Es opcional: 0 renglones es válido al guardar (ej. fletes, cuyo detalle se
+            # completa después) — no bloquea la creación de la factura.
+            imputaciones = datos.get("imputaciones") or []
+            if not isinstance(imputaciones, list):
+                raise ValueError("'imputaciones' debe ser una lista")
 
-            elif tipo_factura == "Logistica":
+            if imputaciones:
+                query_imputacion = text("""
+                    INSERT INTO facturas_financieras_detalle (id_factura, cuenta_contable, centro_costo, monto)
+                    VALUES (:id_factura, :cuenta_contable, :centro_costo, :monto);
+                """)
+                for imp in imputaciones:
+                    conn.execute(
+                        query_imputacion,
+                        {
+                            "id_factura": str_id_factura,
+                            "cuenta_contable": imp.get("cuenta_contable"),
+                            "centro_costo": imp.get("centro_costo"),
+                            "monto": float(imp.get("monto") or 0),
+                        }
+                    )
+
+            # Caso 2 — Hoja de ruta (fletes): lista de renglones destino/monto, igual criterio que
+            # 'imputaciones' — opcional, 0 renglones es válido (normalmente se completa DESPUÉS
+            # del guardado inicial, vía InvoiceDetailWorkspace, no bloquea la creación aquí).
+            hoja_ruta = datos.get("hoja_ruta") or []
+            if not isinstance(hoja_ruta, list):
+                raise ValueError("'hoja_ruta' debe ser una lista")
+
+            if hoja_ruta:
+                query_hoja_ruta = text("""
+                    INSERT INTO facturas_hoja_ruta (id_factura, destino, monto)
+                    VALUES (:id_factura, :destino, :monto);
+                """)
+                for tramo in hoja_ruta:
+                    conn.execute(
+                        query_hoja_ruta,
+                        {
+                            "id_factura": str_id_factura,
+                            "destino": tramo.get("destino"),
+                            "monto": float(tramo.get("monto") or 0),
+                        }
+                    )
+
+            # Caso 1 — Retenciones ISLR: lista de renglones id_impuesto_islr/monto que el
+            # analista confirmó explícitamente en la revisión (por eso siempre se insertan con
+            # confirmada=true — no se guarda nada que el analista no haya elegido a mano).
+            retenciones_islr = datos.get("retenciones_islr") or []
+            if not isinstance(retenciones_islr, list):
+                raise ValueError("'retenciones_islr' debe ser una lista")
+
+            if retenciones_islr:
+                query_islr = text("""
+                    INSERT INTO facturas_retenciones_islr (id_factura, id_impuesto_islr, monto, confirmada)
+                    VALUES (:id_factura, :id_impuesto_islr, :monto, true);
+                """)
+                for ret in retenciones_islr:
+                    conn.execute(
+                        query_islr,
+                        {
+                            "id_factura": str_id_factura,
+                            "id_impuesto_islr": ret.get("id_impuesto_islr"),
+                            "monto": float(ret.get("monto") or 0),
+                        }
+                    )
+
+            if tipo_factura == "Logistica":
                 items = datos.get("items")
                 if items is not None:
                     if not isinstance(items, list):
                         raise ValueError("Se requiere una lista de 'items' para facturas Logísticas")
-                    
+
                     query_item = text("""
                         INSERT INTO facturas_logisticas_items (
                             id_factura, numero_po, posicion_item, descripcion_articulo,
@@ -734,7 +844,9 @@ def get_facturas(filtros: dict = None) -> list:
             SELECT f.id_factura, f.tipo_factura, f.id_proveedor, f.id_sociedad, f.numero_factura,
                    f.fecha_factura, f.importe_total, f.id_impuesto, f.documento_sap_generado,
                    f.fecha_creacion, f.id_estado_factura,
-                   ef.nombre_estado AS estado_registro_sap, 
+                   f.esporadico, f.nombre_proveedor_esporadico, f.rif_proveedor_esporadico,
+                   f.orden_co, f.origen_documento_id, f.tipo_servicio_islr,
+                   ef.nombre_estado AS estado_registro_sap,
                    p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor,
                    s.nombre_sociedad, s.rif_sociedad, s.codigo_sociedad_sap,
                    i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto, i.codigo_impuesto_sap
@@ -792,8 +904,10 @@ def get_factura_completa_por_id(id_factura: str) -> dict | None:
             SELECT f.id_factura, f.tipo_factura, f.id_proveedor, f.id_sociedad, f.numero_factura,
                    f.fecha_factura, f.importe_total, f.id_impuesto, f.documento_sap_generado,
                    f.fecha_creacion, f.id_estado_factura,
-                   ef.nombre_estado AS estado_registro_sap, 
-                   p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor,
+                   f.esporadico, f.nombre_proveedor_esporadico, f.rif_proveedor_esporadico,
+                   f.orden_co, f.origen_documento_id, f.tipo_servicio_islr,
+                   ef.nombre_estado AS estado_registro_sap,
+                   p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor, p.categoria AS categoria_proveedor,
                    s.nombre_sociedad, s.rif_sociedad, s.codigo_sociedad_sap,
                    i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto, i.codigo_impuesto_sap
             FROM facturas f
@@ -811,17 +925,58 @@ def get_factura_completa_por_id(id_factura: str) -> dict | None:
             
             factura = row_to_dict(row)
             tipo_factura = factura.get("tipo_factura")
-            
-            if tipo_factura == "Financiera":
-                sql_detalle = "SELECT cuenta_contable, centro_costo FROM facturas_financieras_detalle WHERE id_factura = :id_factura;"
-                det = conn.execute(text(sql_detalle), {"id_factura": id_factura}).fetchone()
-                factura["detalle_financiero"] = row_to_dict(det) if det else None
-                
-            elif tipo_factura == "Logistica":
+
+            # Distribución contable (imputaciones): ya no depende de tipo_factura — cualquier
+            # factura puede traer 0, 1 o varios renglones.
+            sql_imputaciones = """
+                SELECT id_detalle, cuenta_contable, centro_costo, monto
+                FROM facturas_financieras_detalle
+                WHERE id_factura = :id_factura
+                ORDER BY cuenta_contable ASC;
+            """
+            result_imputaciones = conn.execute(text(sql_imputaciones), {"id_factura": id_factura})
+            factura["imputaciones"] = [row_to_dict(r) for r in result_imputaciones]
+
+            # Caso 6 — Publicidad: bandera no bloqueante calculada al vuelo (no se guarda en BD)
+            # para que el analista sepa que le falta completar la orden CO.
+            factura["orden_co_pendiente"] = (
+                not factura.get("orden_co")
+                and requiere_orden_co(tipo_factura, factura["imputaciones"])
+            )
+
+            # Caso 2 — Fletes: hoja de ruta (destino/monto por tramo), poblada normalmente
+            # DESPUÉS del guardado inicial vía InvoiceDetailWorkspace — no bloquea el registro.
+            sql_hoja_ruta = """
+                SELECT id_detalle, destino, monto
+                FROM facturas_hoja_ruta
+                WHERE id_factura = :id_factura
+                ORDER BY destino ASC;
+            """
+            result_hoja_ruta = conn.execute(text(sql_hoja_ruta), {"id_factura": id_factura})
+            factura["hoja_ruta"] = [row_to_dict(r) for r in result_hoja_ruta]
+            factura["hoja_ruta_pendiente"] = (
+                es_transporte({"categoria": factura.get("categoria_proveedor")})
+                and not factura["hoja_ruta"]
+            )
+
+            # Caso 1 — Retenciones ISLR confirmadas para esta factura, con el detalle del código
+            # (descripción/porcentaje) para mostrarlas sin tener que recargar todo el catálogo.
+            sql_islr = """
+                SELECT r.id_detalle, r.id_impuesto_islr, r.monto, r.confirmada,
+                       i.codigo_impuesto_sap, i.descripcion_impuesto, i.porcentaje
+                FROM facturas_retenciones_islr r
+                JOIN codigos_impuesto_sap i ON r.id_impuesto_islr = i.id_impuesto
+                WHERE r.id_factura = :id_factura
+                ORDER BY i.descripcion_impuesto ASC;
+            """
+            result_islr = conn.execute(text(sql_islr), {"id_factura": id_factura})
+            factura["retenciones_islr"] = [row_to_dict(r) for r in result_islr]
+
+            if tipo_factura == "Logistica":
                 sql_items = "SELECT * FROM facturas_logisticas_items WHERE id_factura = :id_factura ORDER BY posicion_item ASC;"
                 result_items = conn.execute(text(sql_items), {"id_factura": id_factura})
                 factura["items"] = [row_to_dict(r) for r in result_items]
-                
+
             return factura
             
     except Exception as e:
@@ -857,84 +1012,152 @@ def actualizar_factura_completa(id_factura: str, datos: dict) -> bool:
             if not id_estado:
                 id_estado = datos.get("id_estado_factura")
 
-            if id_estado:
-                query_update = text("""
-                    UPDATE facturas
-                    SET id_proveedor = :id_proveedor,
-                        id_sociedad = :id_sociedad,
-                        numero_factura = :numero_factura,
-                        fecha_factura = :fecha_factura,
-                        importe_total = :importe_total,
-                        id_impuesto = :id_impuesto,
-                        id_estado_factura = :id_estado_factura,
-                        documento_sap_generado = :documento_sap_generado
-                    WHERE id_factura = :id_factura;
-                """)
-                params_update = {
-                    "id_factura": id_factura,
-                    "id_proveedor": datos.get("id_proveedor"),
-                    "id_sociedad": datos.get("id_sociedad"),
-                    "numero_factura": datos.get("numero_factura"),
-                    "fecha_factura": datos.get("fecha_factura"),
-                    "importe_total": datos.get("importe_total"),
-                    "id_impuesto": datos.get("id_impuesto"),
-                    "id_estado_factura": id_estado,
-                    "documento_sap_generado": datos.get("documento_sap_generado"),
-                }
-            else:
-                query_update = text("""
-                    UPDATE facturas
-                    SET id_proveedor = :id_proveedor,
-                        id_sociedad = :id_sociedad,
-                        numero_factura = :numero_factura,
-                        fecha_factura = :fecha_factura,
-                        importe_total = :importe_total,
-                        id_impuesto = :id_impuesto,
-                        documento_sap_generado = :documento_sap_generado
-                    WHERE id_factura = :id_factura;
-                """)
-                params_update = {
-                    "id_factura": id_factura,
-                    "id_proveedor": datos.get("id_proveedor"),
-                    "id_sociedad": datos.get("id_sociedad"),
-                    "numero_factura": datos.get("numero_factura"),
-                    "fecha_factura": datos.get("fecha_factura"),
-                    "importe_total": datos.get("importe_total"),
-                    "id_impuesto": datos.get("id_impuesto"),
-                    "documento_sap_generado": datos.get("documento_sap_generado"),
-                }
-            
-            conn.execute(query_update, params_update)
+            # Actualización parcial de la cabecera: solo se arma el SET con las columnas cuya
+            # clave vino en el payload (igual criterio que ya usan más abajo 'imputaciones' /
+            # 'items' / 'orden_co'). Antes esto sobreescribía TODA la cabecera a NULL cuando el
+            # caller solo quería tocar un campo suelto (ej. completar 'orden_co' después del
+            # guardado inicial, Caso 6) — bug real detectado probando ese flujo.
+            set_clauses = []
+            params_update = {"id_factura": id_factura}
 
-            if tipo_factura == "Financiera":
-                detalle_financiero = datos.get("detalle_financiero")
-                if detalle_financiero:
+            # Caso 7 — Proveedor esporádico: mismo criterio que en crear_factura_completa. Se
+            # tocan las 4 columnas juntas solo si vino 'id_proveedor' o 'esporadico'.
+            if "id_proveedor" in datos or "esporadico" in datos:
+                esporadico = bool(datos.get("esporadico"))
+                if esporadico:
+                    nombre_esp = datos.get("nombre_proveedor_esporadico")
+                    rif_esp = datos.get("rif_proveedor_esporadico")
+                    if not nombre_esp or not rif_esp:
+                        raise ValueError(
+                            "'nombre_proveedor_esporadico' y 'rif_proveedor_esporadico' son obligatorios cuando esporadico=true"
+                        )
+                    id_proveedor_final = get_id_proveedor_esporadico(conn)
+                else:
+                    nombre_esp = None
+                    rif_esp = None
+                    id_proveedor_final = datos.get("id_proveedor")
+                set_clauses += [
+                    "id_proveedor = :id_proveedor", "esporadico = :esporadico",
+                    "nombre_proveedor_esporadico = :nombre_proveedor_esporadico",
+                    "rif_proveedor_esporadico = :rif_proveedor_esporadico",
+                ]
+                params_update.update({
+                    "id_proveedor": id_proveedor_final,
+                    "esporadico": esporadico,
+                    "nombre_proveedor_esporadico": nombre_esp,
+                    "rif_proveedor_esporadico": rif_esp,
+                })
+
+            for campo in ("id_sociedad", "numero_factura", "fecha_factura", "importe_total",
+                          "id_impuesto", "documento_sap_generado", "orden_co", "origen_documento_id",
+                          "tipo_servicio_islr"):
+                if campo in datos:
+                    set_clauses.append(f"{campo} = :{campo}")
+                    params_update[campo] = datos.get(campo)
+
+            if id_estado:
+                set_clauses.append("id_estado_factura = :id_estado_factura")
+                params_update["id_estado_factura"] = id_estado
+
+            if set_clauses:
+                query_update = text(f"UPDATE facturas SET {', '.join(set_clauses)} WHERE id_factura = :id_factura;")
+                conn.execute(query_update, params_update)
+
+            # Distribución contable (imputaciones): igual que en crear_factura_completa, ya no
+            # depende de tipo_factura, y ahora es una lista — reemplazo total (DELETE + re-INSERT)
+            # igual criterio que ya se usa abajo para facturas_logisticas_items. Solo se toca si
+            # el payload trae la clave 'imputaciones' (permite actualizaciones parciales que no
+            # tocan la distribución contable).
+            if "imputaciones" in datos:
+                imputaciones = datos.get("imputaciones") or []
+                if not isinstance(imputaciones, list):
+                    raise ValueError("'imputaciones' debe ser una lista")
+
+                conn.execute(
+                    text("DELETE FROM facturas_financieras_detalle WHERE id_factura = :id_factura;"),
+                    {"id_factura": id_factura}
+                )
+                if imputaciones:
                     query_det = text("""
-                        INSERT INTO facturas_financieras_detalle (id_factura, cuenta_contable, centro_costo)
-                        VALUES (:id_factura, :cuenta_contable, :centro_costo)
-                        ON CONFLICT (id_factura) DO UPDATE
-                        SET cuenta_contable = EXCLUDED.cuenta_contable,
-                            centro_costo = EXCLUDED.centro_costo;
+                        INSERT INTO facturas_financieras_detalle (id_factura, cuenta_contable, centro_costo, monto)
+                        VALUES (:id_factura, :cuenta_contable, :centro_costo, :monto);
                     """)
-                    conn.execute(
-                        query_det,
-                        {
-                            "id_factura": id_factura,
-                            "cuenta_contable": detalle_financiero.get("cuenta_contable"),
-                            "centro_costo": detalle_financiero.get("centro_costo")
-                        }
-                    )
-            elif tipo_factura == "Logistica":
+                    for imp in imputaciones:
+                        conn.execute(
+                            query_det,
+                            {
+                                "id_factura": id_factura,
+                                "cuenta_contable": imp.get("cuenta_contable"),
+                                "centro_costo": imp.get("centro_costo"),
+                                "monto": float(imp.get("monto") or 0),
+                            }
+                        )
+
+            # Caso 2 — Hoja de ruta (fletes): mismo criterio que 'imputaciones' — reemplazo total,
+            # solo si el payload trae la clave 'hoja_ruta'. Es el caso de uso típico: se completa
+            # en una edición posterior al guardado inicial (InvoiceDetailWorkspace), sin volver a
+            # mandar el resto de la factura.
+            if "hoja_ruta" in datos:
+                hoja_ruta = datos.get("hoja_ruta") or []
+                if not isinstance(hoja_ruta, list):
+                    raise ValueError("'hoja_ruta' debe ser una lista")
+
+                conn.execute(
+                    text("DELETE FROM facturas_hoja_ruta WHERE id_factura = :id_factura;"),
+                    {"id_factura": id_factura}
+                )
+                if hoja_ruta:
+                    query_hr = text("""
+                        INSERT INTO facturas_hoja_ruta (id_factura, destino, monto)
+                        VALUES (:id_factura, :destino, :monto);
+                    """)
+                    for tramo in hoja_ruta:
+                        conn.execute(
+                            query_hr,
+                            {
+                                "id_factura": id_factura,
+                                "destino": tramo.get("destino"),
+                                "monto": float(tramo.get("monto") or 0),
+                            }
+                        )
+
+            # Caso 1 — Retenciones ISLR: mismo criterio de reemplazo total, solo si el payload
+            # trae la clave 'retenciones_islr'. Solo se guardan las que el analista confirmó.
+            if "retenciones_islr" in datos:
+                retenciones_islr = datos.get("retenciones_islr") or []
+                if not isinstance(retenciones_islr, list):
+                    raise ValueError("'retenciones_islr' debe ser una lista")
+
+                conn.execute(
+                    text("DELETE FROM facturas_retenciones_islr WHERE id_factura = :id_factura;"),
+                    {"id_factura": id_factura}
+                )
+                if retenciones_islr:
+                    query_islr = text("""
+                        INSERT INTO facturas_retenciones_islr (id_factura, id_impuesto_islr, monto, confirmada)
+                        VALUES (:id_factura, :id_impuesto_islr, :monto, true);
+                    """)
+                    for ret in retenciones_islr:
+                        conn.execute(
+                            query_islr,
+                            {
+                                "id_factura": id_factura,
+                                "id_impuesto_islr": ret.get("id_impuesto_islr"),
+                                "monto": float(ret.get("monto") or 0),
+                            }
+                        )
+
+            if tipo_factura == "Logistica":
                 items = datos.get("items")
                 if items is not None:
                     if not isinstance(items, list):
                         raise ValueError("items debe ser una lista para facturas Logísticas")
-                    
+
                     conn.execute(
                         text("DELETE FROM facturas_logisticas_items WHERE id_factura = :id_factura;"),
                         {"id_factura": id_factura}
                     )
-                    
+
                     query_item = text("""
                         INSERT INTO facturas_logisticas_items (
                             id_factura, numero_po, posicion_item, descripcion_articulo,

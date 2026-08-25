@@ -110,12 +110,19 @@ REGLAS GENERALES DE EXTRACCIÓN
    - Si no puedes determinar el valor de un campo con base en el documento, devuélvelo como null.
    - Si ves dos unidades de precios, debes tomar el dolar que siempre va representado com $XX donde las x son los numeros, es decir, el signo de dolar siempre va delante de izquierda a derecha.
 
-4. IDENTIFICACIÓN DE ENTIDADES (SOLO TEXTO, SIN MAPEAR A BASE DE DATOS):
+4. IMPUTACIONES / DISTRIBUCIÓN CONTABLE ('imputaciones'):
+   - Aplica tanto a facturas Financieras como Logísticas — no asumas que es exclusivo de un tipo.
+   - Solo agrega un renglón si el DOCUMENTO MISMO trae impresa una cuenta contable y/o centro de
+     costo explícitos (poco común). Nunca inventes ni estimes una cuenta contable que no esté
+     escrita en el papel — en la gran mayoría de los casos esta lista debe quedar vacía ([]), y
+     eso es lo correcto.
+
+5. IDENTIFICACIÓN DE ENTIDADES (SOLO TEXTO, SIN MAPEAR A BASE DE DATOS):
    A. PROVEEDOR/EMISOR: extrae su RIF ('rif_proveedor') y nombre o razón social ('nombre_proveedor') reales tal como figuran en el papel.
    B. SOCIEDAD ADQUIRIENTE/COMPRADOR: extrae el RIF ('rif_sociedad') y nombre ('nombre_sociedad') reales de la empresa a la que va dirigida la factura (ej: "C.A. Ron Santa Teresa", "C.A Licores de Calidad", "Estación El Consejo", etc.).
    C. IMPUESTO: extrae el porcentaje real de IVA de la factura ('porcentaje_impuesto') como número float (ej: 16%, 8%, 0% o exento -> 0.00).
 
-5. DATOS DE CUMPLIMIENTO FISCAL SENIAT (Venezuela):
+6. DATOS DE CUMPLIMIENTO FISCAL SENIAT (Venezuela):
    Extrae, únicamente si están legibles en el documento, los siguientes datos adicionales para
    poder validar si la factura cumple los requisitos fiscales venezolanos. No inventes ni infieras
    ningún valor — si el dato no aparece explícitamente en el documento, devuelve null (o false
@@ -143,6 +150,42 @@ REGLAS GENERALES DE EXTRACCIÓN
      muestra una tasa de cambio BCV del día con su conversión a bolívares, extrae ese valor
      numérico (tasa en bolívares por unidad de divisa). null si la factura está en VES o si no
      indica ninguna tasa.
+
+7. VENTA POR CUENTA DE TERCEROS ('tercero'):
+   - Algunos documentos traen, ADEMÁS del bloque normal de Base Imponible/IVA/Total del emisor,
+     un SEGUNDO bloque de Base Imponible/IVA/Total separado y explícitamente etiquetado como
+     venta "a Cuenta de Terceros" o "por cuenta de" (usualmente amparado en los Art. 14/15 de la
+     Providencia SNAT), con su propio nombre y RIF de titular — ej: "HONORARIOS DE INFLUENCER —
+     Venta por Cuenta de Terceros: JORGE DANIEL PARRA V-28405749-6".
+   - Solo llena 'tercero' cuando el documento trae ESE segundo bloque impreso con su propio
+     titular (nombre + RIF) Y sus propios montos (base imponible, IVA, total) separados del
+     bloque del emisor. NUNCA lo infieras a partir de una sola línea de ítem o de un monto suelto
+     sin su propio titular — la señal es la presencia explícita de la leyenda "cuenta de
+     terceros"/"por cuenta de" con nombre y RIF propios. Si no hay ese segundo bloque, 'tercero'
+     debe ser null.
+   - Cuando SÍ existe el bloque de terceros: los campos generales 'subtotal', 'iva_monto' e
+     'importe_total' (fuera de 'tercero') deben corresponder ÚNICAMENTE al bloque propio del
+     emisor — NO sumes ahí el bloque de terceros. Cada bloque se copia tal como está impreso, sin
+     prorratear ni recalcular nada.
+   - Cuando SÍ aplica, 'tercero' es un objeto con exactamente estas claves: "nombre_tercero"
+     (string), "rif_tercero" (string), "subtotal_tercero" (number), "iva_monto_tercero" (number),
+     "importe_total_tercero" (number) — todas tomadas tal como están impresas en el bloque de
+     terceros. Cuando NO aplica (la gran mayoría de las facturas), 'tercero' debe ser exactamente
+     el valor null, no un objeto con sus campos en null.
+
+8. RETENCIÓN ISLR — TIPO DE SERVICIO ('tipo_servicio_islr'):
+   - Algunos servicios facturados (honorarios profesionales, publicidad, arrendamiento, fletes,
+     servicios en general) están sujetos por ley a una retención de ISLR además del IVA. Esa
+     retención depende del TIPO de servicio, no de lo que diga la factura sobre porcentajes.
+   - Extrae únicamente el texto que describe la naturaleza del servicio facturado, tal como se
+     entendería del propio documento (ej. "honorarios profesionales", "publicidad y promoción",
+     "arrendamiento de local", "flete de mercancía", "servicio de consultoría"). Usa tus propias
+     palabras si el documento no trae una etiqueta exacta, pero basándote solo en lo que el
+     documento describe — nunca inventes un tipo de servicio que no se pueda inferir del
+     contenido real.
+   - NUNCA extraigas ni calcules un porcentaje de retención ISLR aquí — eso se resuelve después
+     contra el catálogo de impuestos en el backend, tú solo describes el servicio.
+   - Si no puedes determinar razonablemente el tipo de servicio, devuelve null.
 
 ═══════════════════════════════════════════════
 ESQUEMA JSON DE SALIDA REQUERIDO
@@ -182,11 +225,18 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
     "tasa_cambio_bcv": null
   }},
 
-  "detalle_financiero": {{
-    "cuenta_contable": "Debe ser null, no estimar ni llenar por defecto",
-    "centro_costo": "Debe ser null, no estimar ni llenar por defecto"
-  }},
-  
+  "imputaciones": [
+    {{
+      "cuenta_contable": "Solo si el documento la indica explícitamente, si no null",
+      "centro_costo": "Solo si el documento lo indica explícitamente, si no null",
+      "monto": 0.00
+    }}
+  ],
+
+  "tercero": null,
+
+  "tipo_servicio_islr": "Descripción breve del tipo de servicio (ver regla 8), o null",
+
   "items": [
     {{
       "numero_po": "Número de orden de compra si figura, o null",

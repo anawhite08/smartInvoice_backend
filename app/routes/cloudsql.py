@@ -423,9 +423,14 @@ def rutas_facturas():
             imp_total = data.get("importe_total")
             id_imp = data.get("id_impuesto")
 
+            # Caso 7 — Proveedor esporádico: no viene 'id_proveedor' del catálogo, sino
+            # nombre/RIF sueltos que crear_factura_completa resuelve contra el centinela '40005'.
+            if data.get("esporadico"):
+                id_prov = True  # ya no es obligatorio para pasar la validación de abajo
+
             if not tipo or not id_prov or not id_soc or not num_fact or not fecha or imp_total is None or not id_imp:
                 return jsonify({
-                    "error": "Los campos 'tipo_factura', 'id_proveedor', 'id_sociedad', 'numero_factura', 'fecha_factura', 'importe_total' e 'id_impuesto' son obligatorios."
+                    "error": "Los campos 'tipo_factura', 'id_proveedor' (o 'esporadico'), 'id_sociedad', 'numero_factura', 'fecha_factura', 'importe_total' e 'id_impuesto' son obligatorios."
                 }), 400
 
             nuevo_id = crear_factura_completa(data)
