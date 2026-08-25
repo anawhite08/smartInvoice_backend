@@ -473,8 +473,8 @@ def crear_impuesto(datos: dict) -> str | None:
         engine = get_engine()
         with engine.connect() as conn:
             query = text("""
-                INSERT INTO codigos_impuesto_sap (descripcion_impuesto, porcentaje, codigo_impuesto_sap)
-                VALUES (:descripcion_impuesto, :porcentaje, :codigo_impuesto_sap)
+                INSERT INTO codigos_impuesto_sap (descripcion_impuesto, porcentaje, codigo_impuesto_sap, tipo_impuesto)
+                VALUES (:descripcion_impuesto, :porcentaje, :codigo_impuesto_sap, :tipo_impuesto)
                 RETURNING id_impuesto;
             """)
             result = conn.execute(
@@ -483,6 +483,7 @@ def crear_impuesto(datos: dict) -> str | None:
                     "descripcion_impuesto": datos.get("descripcion_impuesto"),
                     "porcentaje": datos.get("porcentaje"),
                     "codigo_impuesto_sap": datos.get("codigo_impuesto_sap"),
+                    "tipo_impuesto": datos.get("tipo_impuesto"),
                 }
             )
             new_id = result.fetchone()[0]
@@ -502,6 +503,30 @@ def get_impuestos() -> list:
             return [row_to_dict(r) for r in result]
     except Exception as e:
         print(f"❌ Error al obtener impuestos: {e}")
+        return []
+
+
+def get_impuestos_permitidos(id_proveedor: str) -> list:
+    """
+    Devuelve los códigos de codigos_impuesto_sap marcados como permitidos para este proveedor
+    (tabla puente proveedor_impuestos, poblada desde el Excel real del cliente). Lista vacía
+    significa "sin restricción configurada" — el frontend debe interpretarlo como "mostrar el
+    catálogo completo", no como "ningún código permitido" (mismo criterio no bloqueante que el
+    resto de los casos especiales).
+    """
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            query = text("""
+                SELECT i.* FROM codigos_impuesto_sap i
+                JOIN proveedor_impuestos pi ON i.id_impuesto = pi.id_impuesto
+                WHERE pi.id_proveedor = :id_proveedor
+                ORDER BY i.tipo_impuesto, i.porcentaje ASC;
+            """)
+            result = conn.execute(query, {"id_proveedor": id_proveedor})
+            return [row_to_dict(r) for r in result]
+    except Exception as e:
+        print(f"❌ Error al obtener impuestos permitidos del proveedor {id_proveedor}: {e}")
         return []
 
 
@@ -527,7 +552,8 @@ def actualizar_impuesto(id_impuesto: str, datos: dict) -> bool:
                 UPDATE codigos_impuesto_sap
                 SET descripcion_impuesto = :descripcion_impuesto,
                     porcentaje = :porcentaje,
-                    codigo_impuesto_sap = :codigo_impuesto_sap
+                    codigo_impuesto_sap = :codigo_impuesto_sap,
+                    tipo_impuesto = :tipo_impuesto
                 WHERE id_impuesto = :id_impuesto
             """)
             conn.execute(
@@ -537,6 +563,7 @@ def actualizar_impuesto(id_impuesto: str, datos: dict) -> bool:
                     "descripcion_impuesto": datos.get("descripcion_impuesto"),
                     "porcentaje": datos.get("porcentaje"),
                     "codigo_impuesto_sap": datos.get("codigo_impuesto_sap"),
+                    "tipo_impuesto": datos.get("tipo_impuesto"),
                 }
             )
             conn.commit()
@@ -650,14 +677,14 @@ def crear_factura_completa(datos: dict) -> str | None:
                         fecha_factura, importe_total, id_impuesto, id_estado_factura,
                         documento_sap_generado, esporadico, nombre_proveedor_esporadico,
                         rif_proveedor_esporadico, orden_co, origen_documento_id,
-                        tipo_servicio_islr, numero_control
+                        tipo_servicio_islr, numero_control, id_retencion_iva, monto_retencion_iva
                     )
                     VALUES (
                         :id_factura, :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura,
                         :fecha_factura, :importe_total, :id_impuesto, :id_estado_factura,
                         :documento_sap_generado, :esporadico, :nombre_proveedor_esporadico,
                         :rif_proveedor_esporadico, :orden_co, :origen_documento_id,
-                        :tipo_servicio_islr, :numero_control
+                        :tipo_servicio_islr, :numero_control, :id_retencion_iva, :monto_retencion_iva
                     )
                     RETURNING id_factura;
                 """)
@@ -679,6 +706,8 @@ def crear_factura_completa(datos: dict) -> str | None:
                     "origen_documento_id": datos.get("origen_documento_id"),
                     "tipo_servicio_islr": datos.get("tipo_servicio_islr"),
                     "numero_control": datos.get("numero_control"),
+                    "id_retencion_iva": datos.get("id_retencion_iva"),
+                    "monto_retencion_iva": datos.get("monto_retencion_iva"),
                 }
             else:
                 query_cabecera = text("""
@@ -687,14 +716,14 @@ def crear_factura_completa(datos: dict) -> str | None:
                         fecha_factura, importe_total, id_impuesto, id_estado_factura,
                         documento_sap_generado, esporadico, nombre_proveedor_esporadico,
                         rif_proveedor_esporadico, orden_co, origen_documento_id,
-                        tipo_servicio_islr, numero_control
+                        tipo_servicio_islr, numero_control, id_retencion_iva, monto_retencion_iva
                     )
                     VALUES (
                         :tipo_factura, :id_proveedor, :id_sociedad, :numero_factura,
                         :fecha_factura, :importe_total, :id_impuesto, :id_estado_factura,
                         :documento_sap_generado, :esporadico, :nombre_proveedor_esporadico,
                         :rif_proveedor_esporadico, :orden_co, :origen_documento_id,
-                        :tipo_servicio_islr, :numero_control
+                        :tipo_servicio_islr, :numero_control, :id_retencion_iva, :monto_retencion_iva
                     )
                     RETURNING id_factura;
                 """)
@@ -715,6 +744,8 @@ def crear_factura_completa(datos: dict) -> str | None:
                     "origen_documento_id": datos.get("origen_documento_id"),
                     "tipo_servicio_islr": datos.get("tipo_servicio_islr"),
                     "numero_control": datos.get("numero_control"),
+                    "id_retencion_iva": datos.get("id_retencion_iva"),
+                    "monto_retencion_iva": datos.get("monto_retencion_iva"),
                 }
             
             result_cabecera = conn.execute(query_cabecera, params)
@@ -877,15 +908,20 @@ def get_facturas(filtros: dict = None) -> list:
                    f.fecha_creacion, f.id_estado_factura,
                    f.esporadico, f.nombre_proveedor_esporadico, f.rif_proveedor_esporadico,
                    f.orden_co, f.origen_documento_id, f.tipo_servicio_islr, f.numero_control,
+                   f.id_retencion_iva, f.monto_retencion_iva,
                    ef.nombre_estado AS estado_registro_sap,
                    p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor,
                    s.nombre_sociedad, s.rif_sociedad, s.codigo_sociedad_sap,
-                   i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto, i.codigo_impuesto_sap
+                   i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto, i.codigo_impuesto_sap,
+                   ri.descripcion_impuesto AS retencion_iva_descripcion,
+                   ri.porcentaje AS retencion_iva_porcentaje,
+                   ri.codigo_impuesto_sap AS retencion_iva_codigo_sap
             FROM facturas f
             JOIN estados_factura ef ON f.id_estado_factura = ef.id_estado_factura
             JOIN proveedores p ON f.id_proveedor = p.id_proveedor
             JOIN sociedades_sap s ON f.id_sociedad = s.id_sociedad
             JOIN codigos_impuesto_sap i ON f.id_impuesto = i.id_impuesto
+            LEFT JOIN codigos_impuesto_sap ri ON f.id_retencion_iva = ri.id_impuesto
             WHERE 1=1
         """
         
@@ -937,15 +973,20 @@ def get_factura_completa_por_id(id_factura: str) -> dict | None:
                    f.fecha_creacion, f.id_estado_factura,
                    f.esporadico, f.nombre_proveedor_esporadico, f.rif_proveedor_esporadico,
                    f.orden_co, f.origen_documento_id, f.tipo_servicio_islr, f.numero_control,
+                   f.id_retencion_iva, f.monto_retencion_iva,
                    ef.nombre_estado AS estado_registro_sap,
                    p.nombre_proveedor, p.rif_proveedor, p.codigo_sap_proveedor, p.categoria AS categoria_proveedor,
                    s.nombre_sociedad, s.rif_sociedad, s.codigo_sociedad_sap,
-                   i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto, i.codigo_impuesto_sap
+                   i.descripcion_impuesto, i.porcentaje as porcentaje_impuesto, i.codigo_impuesto_sap,
+                   ri.descripcion_impuesto AS retencion_iva_descripcion,
+                   ri.porcentaje AS retencion_iva_porcentaje,
+                   ri.codigo_impuesto_sap AS retencion_iva_codigo_sap
             FROM facturas f
             JOIN estados_factura ef ON f.id_estado_factura = ef.id_estado_factura
             JOIN proveedores p ON f.id_proveedor = p.id_proveedor
             JOIN sociedades_sap s ON f.id_sociedad = s.id_sociedad
             JOIN codigos_impuesto_sap i ON f.id_impuesto = i.id_impuesto
+            LEFT JOIN codigos_impuesto_sap ri ON f.id_retencion_iva = ri.id_impuesto
             WHERE f.id_factura = :id_factura;
         """
         
@@ -1093,7 +1134,7 @@ def actualizar_factura_completa(id_factura: str, datos: dict) -> bool:
 
             for campo in ("id_sociedad", "numero_factura", "fecha_factura", "importe_total",
                           "id_impuesto", "documento_sap_generado", "orden_co", "origen_documento_id",
-                          "tipo_servicio_islr", "numero_control"):
+                          "tipo_servicio_islr", "numero_control", "id_retencion_iva", "monto_retencion_iva"):
                 if campo in datos:
                     set_clauses.append(f"{campo} = :{campo}")
                     params_update[campo] = datos.get(campo)

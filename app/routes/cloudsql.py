@@ -24,6 +24,7 @@ from ..utils.cloudsql import (
     get_impuesto_por_id,
     actualizar_impuesto,
     eliminar_impuesto,
+    get_impuestos_permitidos,
     crear_factura_completa,
     get_facturas,
     get_factura_completa_por_id,
@@ -190,6 +191,20 @@ def rutas_proveedores():
         return jsonify({"error": str(e)}), 500
 
 
+@sql_bp.route("/proveedores/<id_proveedor>/impuestos", methods=["GET"])
+def rutas_impuestos_permitidos_proveedor(id_proveedor):
+    """
+    Códigos de codigos_impuesto_sap marcados como permitidos para este proveedor (tabla
+    proveedor_impuestos, importada desde el Excel real del cliente). Lista vacía = sin
+    restricción configurada — el frontend debe mostrar igual el catálogo completo, no bloquear.
+    """
+    try:
+        impuestos = get_impuestos_permitidos(id_proveedor)
+        return jsonify(impuestos), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @sql_bp.route("/proveedores/<id_proveedor>", methods=["GET", "PUT", "DELETE"])
 def rutas_proveedor_detalle(id_proveedor):
     try:
@@ -330,9 +345,10 @@ def rutas_impuestos():
             desc = data.get("descripcion_impuesto")
             porc = data.get("porcentaje")
             cod = data.get("codigo_impuesto_sap")
+            tipo = data.get("tipo_impuesto")
 
-            if desc is None or porc is None or cod is None:
-                return jsonify({"error": "Los campos 'descripcion_impuesto', 'porcentaje' y 'codigo_impuesto_sap' son obligatorios"}), 400
+            if desc is None or porc is None or cod is None or tipo is None:
+                return jsonify({"error": "Los campos 'descripcion_impuesto', 'porcentaje', 'codigo_impuesto_sap' y 'tipo_impuesto' ('IVA'/'RETENCION_IVA'/'ISLR') son obligatorios"}), 400
 
             nuevo_id = crear_impuesto(data)
             if nuevo_id:
@@ -364,9 +380,10 @@ def rutas_impuesto_detalle(id_impuesto):
             desc = data.get("descripcion_impuesto")
             porc = data.get("porcentaje")
             cod = data.get("codigo_impuesto_sap")
+            tipo = data.get("tipo_impuesto")
 
-            if desc is None or porc is None or cod is None:
-                return jsonify({"error": "Los campos 'descripcion_impuesto', 'porcentaje' y 'codigo_impuesto_sap' son obligatorios"}), 400
+            if desc is None or porc is None or cod is None or tipo is None:
+                return jsonify({"error": "Los campos 'descripcion_impuesto', 'porcentaje', 'codigo_impuesto_sap' y 'tipo_impuesto' ('IVA'/'RETENCION_IVA'/'ISLR') son obligatorios"}), 400
 
             success = actualizar_impuesto(id_impuesto, data)
             if success:

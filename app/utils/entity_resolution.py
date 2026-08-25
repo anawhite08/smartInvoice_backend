@@ -40,17 +40,21 @@ def _match_by_rif_or_name(rif: str, nombre: str, catalogo: list, rif_field: str,
     return None
 
 
-def _match_by_percentage(porcentaje, impuestos: list):
+def _match_by_percentage(porcentaje, impuestos: list, tipo_impuesto: str = None):
     if porcentaje is None:
         return None
     try:
         porcentaje = float(porcentaje)
     except (TypeError, ValueError):
         return None
-    if not impuestos:
+
+    candidatos = impuestos
+    if tipo_impuesto:
+        candidatos = [t for t in impuestos if t.get("tipo_impuesto") == tipo_impuesto]
+    if not candidatos:
         return None
 
-    closest = min(impuestos, key=lambda t: abs(float(t.get("porcentaje", 0)) - porcentaje))
+    closest = min(candidatos, key=lambda t: abs(float(t.get("porcentaje", 0)) - porcentaje))
     if abs(float(closest.get("porcentaje", 0)) - porcentaje) > TAX_PERCENTAGE_TOLERANCE:
         return None
     return closest
@@ -76,7 +80,11 @@ def resolve_entities(extracted_info: dict, proveedores: list, sociedades: list, 
     extracted_info["id_sociedad"] = matched_soc.get("id_sociedad") if matched_soc else None
     extracted_info["codigo_sociedad_sap"] = matched_soc.get("codigo_sociedad_sap") if matched_soc else None
 
-    matched_tax = _match_by_percentage(extracted_info.get("porcentaje_impuesto"), impuestos)
+    # Se filtra a tipo_impuesto='IVA' — antes buscaba contra las 12 filas del catálogo mezcladas
+    # (IVA + Retención de IVA + ISLR), lo que podía "cruzarse" por casualidad si algún porcentaje
+    # coincidía entre categorías. La Retención de IVA y el ISLR nunca se resuelven acá: los
+    # ingresa el analista a mano en la revisión (mismo criterio ya usado para ISLR).
+    matched_tax = _match_by_percentage(extracted_info.get("porcentaje_impuesto"), impuestos, tipo_impuesto="IVA")
     extracted_info["id_impuesto"] = matched_tax.get("id_impuesto") if matched_tax else None
     extracted_info["codigo_impuesto_sap"] = matched_tax.get("codigo_impuesto_sap") if matched_tax else None
 
