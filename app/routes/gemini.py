@@ -188,18 +188,29 @@ REGLAS GENERALES DE EXTRACCIÓN
    - Si no puedes determinar razonablemente el tipo de servicio, devuelve null.
 
 9. HOJA DE RUTA CON CENTRO DE COSTO POR TRAMO ('hoja_ruta'):
-   - Algunos proveedores de transporte (ej. taxis, flotas) adjuntan una tabla detallada de
-     servicios/viajes — común bajo títulos como "Relación de Servicios de Taxi" o similar,
-     frecuentemente en una segunda página del documento — con una fila por servicio: fecha,
-     número de planilla, descripción del servicio/recorrido, monto, y su propio Centro de Costo
-     (CeCo). A lo largo de toda la tabla suele repetirse un mismo CeCo o alternar entre 1-2 CeCo
-     distintos — eso es normal, cada fila lleva el CeCo que tenga impreso, sin combinarlos.
-   - Si el documento trae esa tabla, extrae CADA fila tal como está impresa (no resumas ni
-     omitas filas, aunque la tabla sea larga) dentro de "hoja_ruta.tramos". Si además el
-     documento indica una cuenta contable única aplicable a todos los tramos, cópiala en
-     "hoja_ruta.cuenta_contable"; si no la indica, déjala en null.
-   - Si el documento NO trae esa tabla de servicios con CeCo por fila (la gran mayoría de las
-     facturas), "hoja_ruta" completo debe ser el valor null — no un objeto con "tramos": [].
+   - Esto es EXCLUSIVAMENTE para proveedores de transporte (ej. taxis, flotas) que adjuntan una
+     tabla tipo bitácora de servicios/viajes — común bajo títulos como "Relación de Servicios de
+     Taxi" o similar, frecuentemente en una segunda página — con una fila POR SERVICIO/VIAJE
+     INDIVIDUAL REALIZADO: fecha del servicio, número de planilla, descripción del
+     recorrido/servicio (ej. "Buscar a las 5:25 a.m. ... y llevarlos a..."), y un MONTO EN
+     DINERO ya impreso tal cual para ese servicio (nunca calculado por ti). Cada fila también
+     puede traer su propio Centro de Costo (CeCo); a lo largo de la tabla es normal que se repita
+     un mismo CeCo o alterne entre 1-2 distintos.
+   - NO CONFUNDAS esto con una tabla de "% de Participación por Centro de Costo" o similar (donde
+     cada CeCo tiene un PORCENTAJE, no un monto de un servicio real prestado, y no hay fecha ni
+     descripción de un viaje/servicio individual) — ese es un caso distinto (reparto entre
+     sociedades) y NO debe llenar 'hoja_ruta'. La señal correcta de 'hoja_ruta' es una bitácora de
+     servicios reales con fecha+descripción+monto por fila, no una tabla de porcentajes de
+     asignación contable.
+   - NUNCA calcules ni derives un "monto" a partir de un porcentaje — si una fila solo trae un
+     porcentaje y no un monto en dinero ya impreso, esa tabla NO es 'hoja_ruta'.
+   - Si el documento SÍ trae la bitácora de servicios descrita arriba, extrae CADA fila tal como
+     está impresa (no resumas ni omitas filas, aunque la tabla sea larga) dentro de
+     "hoja_ruta.tramos". Si además el documento indica una cuenta contable única aplicable a
+     todos los tramos, cópiala en "hoja_ruta.cuenta_contable"; si no la indica, déjala en null.
+   - Si el documento NO trae esa bitácora de servicios (la gran mayoría de las facturas,
+     incluidas las que tienen tablas de porcentajes por CeCo), "hoja_ruta" completo debe ser el
+     valor null — no un objeto con "tramos": [].
    - Nunca inventes un CeCo, fecha o número de planilla que no esté impreso — usa null en el
      campo correspondiente de esa fila si falta.
    - Cuando SÍ aplica, "hoja_ruta" es un objeto con exactamente estas claves: "cuenta_contable"
