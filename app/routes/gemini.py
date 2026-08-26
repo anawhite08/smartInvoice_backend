@@ -300,7 +300,6 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
       "posicion_item": 1,
       "descripcion_articulo": "Descripción del producto/servicio",
       "cantidad_facturada": 1.00,
-      "unidad_medida": "UN o similar, extraído o null",
       "precio_unitario": 0.00,
       "importe_posicion": 0.00
     }}
