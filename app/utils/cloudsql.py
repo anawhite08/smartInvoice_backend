@@ -410,6 +410,57 @@ def get_sociedades() -> list:
         return []
 
 
+def get_sociedad_por_centro_costo(codigos_centro_costo: list) -> dict:
+    """
+    Refinamiento — CeCo % combinado con Multisociedad (Corpoelec): cada Centro de Costo de la
+    tabla "% de Participación por CeCo" pertenece a una sociedad específica (dato que NO viene en
+    el documento — lo asigna el analista a mano en Revisión). Esta función devuelve
+    {centro_costo: id_sociedad} para los códigos pedidos, a partir de asignaciones que el
+    analista ya confirmó en facturas anteriores — para PRESELECCIONAR, nunca para bloquear.
+    Códigos sin asignación previa simplemente no aparecen en el dict devuelto.
+    """
+    if not codigos_centro_costo:
+        return {}
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            query = text("""
+                SELECT centro_costo, id_sociedad
+                FROM centro_costo_sociedad
+                WHERE centro_costo = ANY(:codigos)
+            """)
+            result = conn.execute(query, {"codigos": codigos_centro_costo})
+            return {row.centro_costo: str(row.id_sociedad) for row in result}
+    except Exception as e:
+        print(f"❌ Error al obtener sociedades por centro de costo {codigos_centro_costo}: {e}")
+        return {}
+
+
+def _upsert_centro_costo_sociedad(conn, asignaciones: list) -> None:
+    """
+    Recuerda/actualiza la sociedad asignada a cada Centro de Costo, para preseleccionarla la
+    próxima vez que aparezca el mismo código — nunca autoritativa sobre lo que el analista elige
+    en pantalla, solo una sugerencia futura. Se llama siempre que se guarda distribución de CeCo
+    con id_sociedad (idempotente vía ON CONFLICT, el último valor guardado gana). DEBE llamarse
+    con una conexión YA ABIERTA por el caller (misma transacción de crear/actualizar factura,
+    nunca abre la suya propia).
+    """
+    if not asignaciones:
+        return
+    query = text("""
+        INSERT INTO centro_costo_sociedad (centro_costo, id_sociedad, actualizado_en)
+        VALUES (:centro_costo, :id_sociedad, now())
+        ON CONFLICT (centro_costo) DO UPDATE
+        SET id_sociedad = EXCLUDED.id_sociedad, actualizado_en = now();
+    """)
+    for a in asignaciones:
+        centro_costo = (a.get("centro_costo") or "").strip()
+        id_sociedad = a.get("id_sociedad")
+        if not centro_costo or not id_sociedad:
+            continue
+        conn.execute(query, {"centro_costo": centro_costo, "id_sociedad": id_sociedad})
+
+
 def get_sociedad_por_id(id_sociedad: str) -> dict | None:
     try:
         engine = get_engine()
@@ -837,8 +888,8 @@ def crear_factura_completa(datos: dict) -> str | None:
 
             if distribucion_ceco_pct:
                 query_dist_pct = text("""
-                    INSERT INTO facturas_distribucion_ceco_pct (id_factura, centro_costo, porcentaje)
-                    VALUES (:id_factura, :centro_costo, :porcentaje);
+                    INSERT INTO facturas_distribucion_ceco_pct (id_factura, centro_costo, porcentaje, id_sociedad)
+                    VALUES (:id_factura, :centro_costo, :porcentaje, :id_sociedad);
                 """)
                 for renglon in distribucion_ceco_pct:
                     conn.execute(
@@ -847,8 +898,12 @@ def crear_factura_completa(datos: dict) -> str | None:
                             "id_factura": str_id_factura,
                             "centro_costo": renglon.get("centro_costo"),
                             "porcentaje": float(renglon.get("porcentaje") or 0),
+                            "id_sociedad": renglon.get("id_sociedad"),
                         }
                     )
+                # Refinamiento CeCo % + Multisociedad: recuerda la sociedad que el analista
+                # asignó a cada Centro de Costo, para preseleccionarla en próximas facturas.
+                _upsert_centro_costo_sociedad(conn, distribucion_ceco_pct)
 
             if tipo_factura == "Logistica":
                 items = datos.get("items")
@@ -1048,7 +1103,7 @@ def get_factura_completa_por_id(id_factura: str) -> dict | None:
             # Distribución de CeCo por porcentaje (Corpoelec y similares) — dato crudo, separado
             # de las imputaciones ya calculadas contra el importe_total de este registro.
             sql_dist_pct = """
-                SELECT id_detalle, centro_costo, porcentaje
+                SELECT id_detalle, centro_costo, porcentaje, id_sociedad
                 FROM facturas_distribucion_ceco_pct
                 WHERE id_factura = :id_factura
                 ORDER BY centro_costo ASC;
@@ -1249,8 +1304,8 @@ def actualizar_factura_completa(id_factura: str, datos: dict) -> bool:
                 )
                 if distribucion_ceco_pct:
                     query_dist_pct = text("""
-                        INSERT INTO facturas_distribucion_ceco_pct (id_factura, centro_costo, porcentaje)
-                        VALUES (:id_factura, :centro_costo, :porcentaje);
+                        INSERT INTO facturas_distribucion_ceco_pct (id_factura, centro_costo, porcentaje, id_sociedad)
+                        VALUES (:id_factura, :centro_costo, :porcentaje, :id_sociedad);
                     """)
                     for renglon in distribucion_ceco_pct:
                         conn.execute(
@@ -1259,8 +1314,10 @@ def actualizar_factura_completa(id_factura: str, datos: dict) -> bool:
                                 "id_factura": id_factura,
                                 "centro_costo": renglon.get("centro_costo"),
                                 "porcentaje": float(renglon.get("porcentaje") or 0),
+                                "id_sociedad": renglon.get("id_sociedad"),
                             }
                         )
+                    _upsert_centro_costo_sociedad(conn, distribucion_ceco_pct)
 
             if tipo_factura == "Logistica":
                 items = datos.get("items")

@@ -19,6 +19,7 @@ from ..utils.cloudsql import (
     get_sociedad_por_id,
     actualizar_sociedad,
     eliminar_sociedad,
+    get_sociedad_por_centro_costo,
     crear_impuesto,
     get_impuestos,
     get_impuesto_por_id,
@@ -279,6 +280,22 @@ def rutas_sociedades():
                 }), 201
             else:
                 return jsonify({"error": "No se pudo crear la sociedad"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@sql_bp.route("/centro-costo-sociedad", methods=["GET"])
+def rutas_centro_costo_sociedad():
+    """
+    Refinamiento — CeCo % combinado con Multisociedad: mapa {centro_costo: id_sociedad} para los
+    códigos pedidos (?codigos=21111,21112,...), a partir de asignaciones que el analista ya
+    confirmó en facturas anteriores. Solo para preseleccionar en pantalla — nunca bloquea.
+    """
+    try:
+        codigos_raw = request.args.get("codigos", "")
+        codigos = [c.strip() for c in codigos_raw.split(",") if c.strip()]
+        mapa = get_sociedad_por_centro_costo(codigos)
+        return jsonify(mapa), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
