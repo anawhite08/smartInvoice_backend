@@ -43,18 +43,19 @@ def resolver_candidatos_islr(id_proveedor: str | None, impuestos: list) -> list:
 def homologar_items_islr(gemini_client, model: str, items: list, candidatos: list) -> dict:
     """
     Homologa cada ítem (descripción) contra los códigos ISLR candidatos vía una llamada de
-    texto plano a Gemini. Agrupa el resultado por código resuelto, sumando el monto de los
-    ítems que le tocaron a cada uno — mismo criterio de "agrupar y sumar" que ya usa
-    `agruparHojaRutaPorCeco` en el frontend para Centro de Costo.
+    texto plano a Gemini — devuelve la asignación POR ÍTEM, sin agrupar. El agrupamiento (¿es
+    "general" o "por ítem"?) se decide en el frontend según cuántos códigos tiene permitidos el
+    proveedor (ver `debeSerIslrPorItem`/`agruparIslrPorItem` en `src/utils/businessRules.ts`) —
+    acá solo se clasifica cada ítem, nunca se agrupa ni se decide el modo de visualización.
 
     Nunca lanza: cualquier fallo (red, parseo) devuelve el resultado vacío, para que la
     extracción principal nunca se vea bloqueada por esta homologación adicional — el analista
     siempre puede seguir marcando ISLR a mano, como ya funcionaba antes de esto.
 
-    Devuelve: {"grupos": [{"id_impuesto_islr": str, "monto": float, "conceptos": [str, ...]}],
-               "sin_asignar": [str, ...]}
+    Devuelve: {"asignaciones": [{"item": int (1-based), "id_impuesto_islr": str | None}, ...]}
+              un elemento por cada ítem recibido, en el mismo orden.
     """
-    vacio = {"grupos": [], "sin_asignar": []}
+    vacio = {"asignaciones": []}
     if not items or len(candidatos) < 2:
         return vacio
 
@@ -94,8 +95,7 @@ por cada ítem de la lista, en el mismo orden."""
         print(f"⚠️ Homologación ISLR por ítem falló, se omite (el analista puede marcar ISLR a mano): {e}")
         return vacio
 
-    grupos_por_id: dict[str, dict] = {}
-    sin_asignar: list[str] = []
+    asignaciones = [{"item": idx + 1, "id_impuesto_islr": None} for idx in range(len(items))]
 
     for entrada in resultado if isinstance(resultado, list) else []:
         try:
@@ -105,21 +105,8 @@ por cada ítem de la lista, en el mismo orden."""
             continue
         if idx < 0 or idx >= len(items):
             continue
-        item = items[idx]
-        descripcion = item.get("descripcion_articulo") or item.get("descripcion") or ""
-        monto = float(item.get("importe_posicion") or item.get("monto") or 0)
-
         candidato = candidatos_por_letra.get(letra) if letra else None
-        if not candidato:
-            if descripcion:
-                sin_asignar.append(descripcion)
-            continue
+        if candidato:
+            asignaciones[idx]["id_impuesto_islr"] = candidato.get("id_impuesto")
 
-        id_impuesto = candidato.get("id_impuesto")
-        if id_impuesto not in grupos_por_id:
-            grupos_por_id[id_impuesto] = {"id_impuesto_islr": id_impuesto, "monto": 0.0, "conceptos": []}
-        grupos_por_id[id_impuesto]["monto"] += monto
-        if descripcion:
-            grupos_por_id[id_impuesto]["conceptos"].append(descripcion)
-
-    return {"grupos": list(grupos_por_id.values()), "sin_asignar": sin_asignar}
+    return {"asignaciones": asignaciones}
