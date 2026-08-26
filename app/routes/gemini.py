@@ -109,7 +109,16 @@ REGLAS GENERALES DE EXTRACCIÓN
 
 3. EVITA ALUCINACIONES:
    - Si no puedes determinar el valor de un campo con base en el documento, devuélvelo como null.
-   - Si ves dos unidades de precios, debes tomar el dolar que siempre va representado com $XX donde las x son los numeros, es decir, el signo de dolar siempre va delante de izquierda a derecha.
+   - MONEDA — SIEMPRE BOLÍVARES (Bs/VES): muchas facturas traen dos columnas de precio, una en
+     dólares (marcada con "$" o "USD") y otra en bolívares (marcada con "Bs", "Bs.S" o similar).
+     "subtotal", "iva_monto", "importe_total" (y cualquier otro monto de la factura, incluidos
+     los de 'imputaciones', 'tercero', 'hoja_ruta' e 'items') deben tomarse SIEMPRE de la columna
+     en bolívares, nunca de la columna en dólares — el sistema solo trabaja en bolívares. Si el
+     documento trae ambas columnas, ignora por completo los valores en dólares para estos campos
+     (el campo aparte "datos_fiscales_seniat.moneda"/"tasa_cambio_bcv" es el único lugar donde sí
+     interesa registrar que también existe un monto en divisas). Si la factura está denominada
+     ÚNICAMENTE en dólares (sin ninguna columna en bolívares), extrae el valor en dólares tal
+     como está impreso — no lo conviertas ni inventes una tasa de cambio.
 
 4. IMPUTACIONES / DISTRIBUCIÓN CONTABLE ('imputaciones'):
    - Aplica tanto a facturas Financieras como Logísticas — no asumas que es exclusivo de un tipo.
