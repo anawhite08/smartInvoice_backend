@@ -13,6 +13,7 @@ from app.utils.storage import upload_to_storage
 from app.utils.cloudsql import get_proveedores, get_sociedades, get_impuestos
 from app.utils.entity_resolution import resolve_entities
 from app.utils.telemetry import record_gemini_usage
+from app.utils.islr_homologacion import resolver_candidatos_islr, homologar_items_islr
 
 gemini_bp = Blueprint("gemini", __name__, url_prefix="/gemini")
 
@@ -177,9 +178,14 @@ REGLAS GENERALES DE EXTRACCIÓN
      prorratear ni recalcular nada.
    - Cuando SÍ aplica, 'tercero' es un objeto con exactamente estas claves: "nombre_tercero"
      (string), "rif_tercero" (string), "subtotal_tercero" (number), "iva_monto_tercero" (number),
-     "importe_total_tercero" (number) — todas tomadas tal como están impresas en el bloque de
-     terceros. Cuando NO aplica (la gran mayoría de las facturas), 'tercero' debe ser exactamente
-     el valor null, no un objeto con sus campos en null.
+     "importe_total_tercero" (number), "items" (lista, ver abajo) — todas tomadas tal como están
+     impresas en el bloque de terceros. Cuando NO aplica (la gran mayoría de las facturas),
+     'tercero' debe ser exactamente el valor null, no un objeto con sus campos en null.
+   - "items" dentro de 'tercero': si el bloque de terceros desglosa varios conceptos/servicios
+     distinguibles (cada uno con su propia descripción y monto), lístalos ahí como objetos
+     {{"descripcion": "...", "monto": 0.00}} — se usa después para homologar el tipo de retención
+     ISLR de cada concepto, igual criterio que los ítems normales de la regla de abajo. Si el
+     bloque de terceros es un monto único sin desglose, "items" debe ser una lista vacía [].
 
 8. RETENCIÓN ISLR — TIPO DE SERVICIO ('tipo_servicio_islr'):
    - Algunos servicios facturados (honorarios profesionales, publicidad, arrendamiento, fletes,
@@ -334,6 +340,35 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
         # texto plano, acá se completan id_proveedor/codigo_sap_proveedor, id_sociedad/
         # codigo_sociedad_sap e id_impuesto/codigo_impuesto_sap contra los catálogos reales.
         extracted_info = resolve_entities(extracted_info, proveedores, sociedades, impuestos)
+
+        # Caso 1 extendido — Homologación de ISLR por ítem: si el proveedor resuelto tiene VARIOS
+        # códigos ISLR permitidos (o ninguno configurado — proveedor esporádico o real sin Excel
+        # aún, ver resolver_candidatos_islr), una segunda llamada de texto plano a Gemini
+        # homologa cada ítem contra los candidatos, en vez de depender solo del texto libre de
+        # 'tipo_servicio_islr'. Si hay un único código permitido, no hace falta nada de esto — se
+        # resuelve en el frontend (código único + % × subtotal). Envuelto en try/except: un fallo
+        # acá nunca debe tumbar la extracción principal, el analista siempre puede seguir
+        # marcando ISLR a mano.
+        try:
+            if extracted_info.get("tipo_factura") == "Logistica" and extracted_info.get("items"):
+                candidatos = resolver_candidatos_islr(extracted_info.get("id_proveedor"), impuestos)
+                if len(candidatos) > 1:
+                    extracted_info["islr_homologado"] = homologar_items_islr(
+                        gemini_client, GEMINI_MODEL, extracted_info["items"], candidatos
+                    )
+
+            tercero = extracted_info.get("tercero")
+            if tercero and tercero.get("items"):
+                # El bloque de terceros siempre resuelve al proveedor esporádico centinela, que
+                # nunca está en el Excel — sus candidatos son directamente el catálogo ISLR
+                # completo (id_proveedor=None hace que resolver_candidatos_islr caiga ahí).
+                candidatos_tercero = resolver_candidatos_islr(None, impuestos)
+                if len(candidatos_tercero) > 1:
+                    tercero["islr_homologado"] = homologar_items_islr(
+                        gemini_client, GEMINI_MODEL, tercero["items"], candidatos_tercero
+                    )
+        except Exception as homolog_err:
+            print(f"⚠️ No se pudo homologar ISLR por ítem: {homolog_err}")
 
         # Respuesta final exitosa
         return jsonify({
