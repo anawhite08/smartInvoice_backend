@@ -7,6 +7,10 @@ USER_DB = os.getenv("userbd")
 PASSWORD_DB = os.getenv("passwordbd")
 DB_NAME = os.getenv("bd")
 DIRECCION = os.getenv("direccion")
+# Conexión directa (ej. PostgreSQL en SAP BTP). Si DB_HOST está definido, se ignora Cloud SQL.
+DB_HOST = os.getenv("db_host")
+DB_PORT = int(os.getenv("db_port", "5432"))
+DB_SSLMODE = os.getenv("db_sslmode", "require")
 INVOICES_BUCKET_NAME = os.getenv("invoices_bucket_name")
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv(
     "GOOGLE_APPLICATION_CREDENTIALS"

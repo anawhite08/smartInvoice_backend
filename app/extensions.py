@@ -5,10 +5,12 @@ import sqlalchemy
 from google.auth import impersonated_credentials
 from google.cloud import storage
 import google.auth
-from .config import USER_DB, PASSWORD_DB, DB_NAME, DIRECCION, TARGET_SERVICE_ACCOUNT, PROJECT_ID, LOCATION, GEMINI_MODEL
+from .config import USER_DB, PASSWORD_DB, DB_NAME, DIRECCION, DB_HOST, DB_PORT, DB_SSLMODE, TARGET_SERVICE_ACCOUNT, PROJECT_ID, LOCATION, GEMINI_MODEL
 from google import genai
 from google.cloud import documentai
 import json
+import ssl
+import pg8000
 
 # ---------------------------------------------------------
 # Cliente del Modelo de Gemini
@@ -36,7 +38,30 @@ def cliente_gemini():
 # Conector SQL 
 connector = Connector()
 
+def _ssl_context():
+    # sslmode=require: cifra la conexión pero no valida el certificado del servidor (igual que libpq)
+    if DB_SSLMODE == "disable":
+        return None
+    ctx = ssl.create_default_context()
+    if DB_SSLMODE == "require":
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
 def get_connection():
+    # Conexión directa por host/puerto (PostgreSQL en SAP BTP)
+    if DB_HOST:
+        print(f"[CONEXION] Conectando a PostgreSQL directo ({DB_HOST}:{DB_PORT}, sslmode={DB_SSLMODE})...")
+        return pg8000.connect(
+            user=USER_DB,
+            password=PASSWORD_DB,
+            database=DB_NAME,
+            host=DB_HOST,
+            port=DB_PORT,
+            ssl_context=_ssl_context(),
+            timeout=10,
+        )
+
     # Si detecta que está en Google Cloud (Cloud Run), usa el conector oficial directamente
     if os.getenv('K_SERVICE'):
         print("[CONEXION] Conectando a Cloud SQL usando Connector (Cloud Run)...")
@@ -52,7 +77,6 @@ def get_connection():
     # y si falla, intentamos usar el Connector oficial (que también funciona localmente)
     try:
         print("[CONEXION] Intentando conexión a Cloud SQL vía Proxy local (127.0.0.1:5432)...")
-        import pg8000
         return pg8000.connect(
             user=USER_DB,
             password=PASSWORD_DB,
