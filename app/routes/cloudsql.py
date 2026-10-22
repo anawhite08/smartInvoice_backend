@@ -36,6 +36,7 @@ from ..utils.cloudsql import (
     actualizar_unidad_negocio,
     eliminar_unidad_negocio,
     asignar_miembros_unidad,
+    asignar_roles_sujeto,
     get_roles,
     crear_rol,
     actualizar_rol,
@@ -90,6 +91,8 @@ def rutas_usuarios():
             nuevo_id = crear_usuario(datos_usuario)
 
             if nuevo_id:
+                if isinstance(data.get("roles"), list):
+                    asignar_roles_sujeto(nuevo_id, data["roles"])
                 return jsonify(
                     {
                         "status": "success",
@@ -164,6 +167,8 @@ def rutas_usuarios_detalle(id_usuario):
 
             success = actualizar_usuario(id_usuario, data)
             if success:
+                if isinstance(data.get("roles"), list) and not asignar_roles_sujeto(id_usuario, data["roles"]):
+                    return jsonify({"error": "Usuario actualizado, pero no se pudieron guardar sus roles"}), 500
                 return jsonify({"status": "success", "message": "Usuario actualizado"}), 200
 
             if firebase_uid:
@@ -560,7 +565,9 @@ def rutas_unidades_negocio():
                 # Si se envían integrantes de una vez
                 if "integrantes" in data and isinstance(data["integrantes"], list):
                     asignar_miembros_unidad(nuevo_id, data["integrantes"])
-                
+                if isinstance(data.get("roles"), list):
+                    asignar_roles_sujeto(nuevo_id, data["roles"])
+
                 return jsonify({
                     "status": "success",
                     "message": "Unidad de negocio creada exitosamente",
@@ -590,6 +597,8 @@ def rutas_unidad_negocio_detalle(id_unidad):
             success = actualizar_unidad_negocio(id_unidad, data)
             if "integrantes" in data and isinstance(data["integrantes"], list):
                 asignar_miembros_unidad(id_unidad, data["integrantes"])
+            if isinstance(data.get("roles"), list):
+                asignar_roles_sujeto(id_unidad, data["roles"])
                 
             if success:
                 return jsonify({"status": "success", "message": "Unidad de negocio actualizada exitosamente"}), 200

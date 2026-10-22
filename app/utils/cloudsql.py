@@ -75,9 +75,48 @@ def crear_usuario(datos: dict) -> str | None:
         return None
 
 
+def get_roles_por_sujeto() -> dict:
+    """
+    {id_sujeto: [id_rol, ...]} para usuarios y unidades de negocio (tabla sujeto_roles,
+    ver scripts/create_sujeto_roles.sql). Si la tabla todavía no existe en esta base,
+    devuelve {} para que los listados sigan funcionando, solo que sin roles.
+    """
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(text("SELECT id_sujeto, id_rol FROM sujeto_roles;")).fetchall()
+        roles = {}
+        for id_sujeto, id_rol in rows:
+            roles.setdefault(str(id_sujeto), []).append(str(id_rol))
+        return roles
+    except Exception as e:
+        print(f"⚠️ No se pudieron obtener los roles asignados (¿falta crear sujeto_roles?): {e}")
+        return {}
+
+
+def asignar_roles_sujeto(id_sujeto: str, id_roles: list) -> bool:
+    """
+    Reemplaza los roles de un usuario o unidad de negocio por la lista recibida.
+    """
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("DELETE FROM sujeto_roles WHERE id_sujeto = :id_sujeto;"), {"id_sujeto": id_sujeto})
+            for id_rol in id_roles:
+                conn.execute(
+                    text("INSERT INTO sujeto_roles (id_sujeto, id_rol) VALUES (:id_sujeto, :id_rol);"),
+                    {"id_sujeto": id_sujeto, "id_rol": id_rol}
+                )
+            conn.commit()
+            return True
+    except Exception as e:
+        print(f"❌ Error al asignar roles a {id_sujeto}: {e}")
+        return False
+
+
 def get_usuarios_activos() -> list:
     """
-    Obtiene la lista de todos los usuarios activos.
+    Obtiene la lista de todos los usuarios activos, con sus roles asignados.
     """
     try:
         engine = get_engine()
@@ -91,7 +130,11 @@ def get_usuarios_activos() -> list:
             result = conn.execute(query)
 
             usuarios = [row_to_dict(r) for r in result]
-            return usuarios
+
+        roles = get_roles_por_sujeto()
+        for u in usuarios:
+            u["roles"] = roles.get(str(u["id_usuario"]), [])
+        return usuarios
 
     except Exception as e:
         print(f"❌ Error al obtener usuarios: {e}")
@@ -1467,8 +1510,11 @@ def get_unidades_negocio() -> list:
                 
                 unit_dict["integrantes"] = [row_to_dict(m) for m in members_result]
                 unidades.append(unit_dict)
-                
-            return unidades
+
+        roles = get_roles_por_sujeto()
+        for unit_dict in unidades:
+            unit_dict["roles"] = roles.get(str(unit_dict["id_unidad_negocio"]), [])
+        return unidades
     except Exception as e:
         print(f"[ERROR] Error al obtener unidades de negocio: {e}")
         return []
