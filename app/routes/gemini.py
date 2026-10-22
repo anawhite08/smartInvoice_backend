@@ -40,23 +40,8 @@ def extract_invoice():
         if not file_bytes or not file_name:
             return jsonify({"error": "No se proporcionó ningún archivo válido (se requiere 'file' o 'file_base64' y 'file_name')"}), 400
 
-        # 2. Subir el documento al bucket de INVOICES_BUCKET_NAME en la carpeta /invoices, con un
-        # ID validado contra la BD y el bucket (compartido entre hosts con BDs distintas)
-        try:
-            unique_id, file_id, blob = generar_y_subir_documento(INVOICES_BUCKET_NAME, file_bytes, file_name)
-        except Exception as storage_err:
-            return jsonify({"error": f"Error al subir el archivo a Cloud Storage: {str(storage_err)}"}), 500
-
-        # 3. Generar URL firmada válida por 1 hora
-        try:
-            signed_url = blob.generate_signed_url(
-                version="v4",
-                expiration=datetime.timedelta(hours=1),
-                method="GET"
-            )
-        except Exception as sign_err:
-            signed_url = f"https://storage.googleapis.com/{INVOICES_BUCKET_NAME}/{file_id}"
-            print(f"⚠️ No se pudo generar la URL firmada, usando URL pública por defecto: {sign_err}")
+        # 2-3. La subida al bucket y la URL firmada se hacen DESPUÉS de que Gemini confirme que
+        # el documento es una factura (ver más abajo), para no guardar documentos rechazados.
 
         # 4. Traer los catálogos de referencia de la base de datos — ya NO se le pasan a Gemini
         # (encarecía el prompt en tokens); se usan después para resolver entidades en Python.
@@ -92,6 +77,24 @@ def extract_invoice():
         system_instruction = f"""Eres un extractor de datos de facturas (tanto Financieras como Logísticas).
 
 Tu función es extraer los datos clave del documento de factura proporcionado, tal como figuran impresos en el papel. NO debes inventar ni asignar identificadores de base de datos — solo transcribir lo que ves.
+
+═══════════════════════════════════════════════
+0. VALIDACIÓN PREVIA: ¿EL DOCUMENTO ES UNA FACTURA?
+═══════════════════════════════════════════════
+Antes de extraer nada, decide si el documento es un comprobante emitido por un proveedor para
+COBRAR bienes o servicios a un comprador, con montos a pagar.
+   - "es_factura": true si lo es. Esto incluye facturas, facturas de venta y también notas de
+     entrega, proformas, presupuestos o recibos de cobro emitidos por un proveedor (esos casos
+     se marcan aparte con "dice_factura": false, NO se rechazan acá).
+   - "es_factura": false si es cualquier otro tipo de documento, por ejemplo: órdenes de compra
+     emitidas por el comprador, comprobantes de retención, contratos, cartas, estados de cuenta
+     bancarios, recibos de nómina, cédulas/RIF/documentos de identidad, fotos o capturas sin
+     relación, páginas en blanco o documentos ilegibles.
+   - "motivo_no_factura": si "es_factura" es false, una frase corta en español explicando qué es
+     el documento (ej. "Es una orden de compra emitida por el comprador", "Es un estado de cuenta
+     bancario", "La imagen está en blanco o es ilegible"). Si "es_factura" es true, null.
+   - Si "es_factura" es false, devuelve el resto de los campos del esquema en null (o listas
+     vacías) — no intentes extraer datos de un documento que no es una factura.
 
 ═══════════════════════════════════════════════
 REGLAS GENERALES DE EXTRACCIÓN
@@ -253,6 +256,9 @@ ESQUEMA JSON DE SALIDA REQUERIDO
 Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructura. No incluyas bloques de código markdown, explicaciones ni texto adicional. El JSON debe comenzar con {{ y terminar con }}. No incluyas ningún campo de tipo "id_..." ni "codigo_...": esos se completan después, no son parte de tu tarea.
 
 {{
+  "es_factura": true,
+  "motivo_no_factura": null,
+
   "tipo_factura": "Logistica" o "Financiera",
 
   "rif_proveedor": "RIF extraído de la factura, ej: J-31641286-5",
@@ -340,6 +346,38 @@ Debes responder ÚNICAMENTE con un objeto JSON válido con la siguiente estructu
                 "error": "No se pudo estructurar el análisis de Gemini como un objeto JSON válido.",
                 "raw_response": raw_text
             }), 500
+
+        # Validación: rechazar documentos que no son facturas (contratos, órdenes de compra,
+        # estados de cuenta, fotos, etc.) antes de subirlos al bucket. Solo un False explícito
+        # rechaza — si Gemini no lo indicó (null), se sigue como antes para no perder facturas
+        # reales por un falso negativo. Notas de entrega/proformas siguen pasando: esas se
+        # marcan aparte con datos_fiscales_seniat.dice_factura=false.
+        if extracted_info.get("es_factura") is False:
+            motivo = extracted_info.get("motivo_no_factura") or "El documento no corresponde a una factura."
+            print(f"🚫 Documento rechazado ({file_name}): {motivo}")
+            return jsonify({
+                "error": f"No es una factura: {motivo}",
+                "es_factura": False,
+                "motivo": motivo
+            }), 422
+
+        # 2. Subir el documento al bucket de INVOICES_BUCKET_NAME en la carpeta /invoices, con un
+        # ID validado contra la BD y el bucket (compartido entre hosts con BDs distintas)
+        try:
+            unique_id, file_id, blob = generar_y_subir_documento(INVOICES_BUCKET_NAME, file_bytes, file_name)
+        except Exception as storage_err:
+            return jsonify({"error": f"Error al subir el archivo a Cloud Storage: {str(storage_err)}"}), 500
+
+        # 3. Generar URL firmada válida por 1 hora
+        try:
+            signed_url = blob.generate_signed_url(
+                version="v4",
+                expiration=datetime.timedelta(hours=1),
+                method="GET"
+            )
+        except Exception as sign_err:
+            signed_url = f"https://storage.googleapis.com/{INVOICES_BUCKET_NAME}/{file_id}"
+            print(f"⚠️ No se pudo generar la URL firmada, usando URL pública por defecto: {sign_err}")
 
         # Resolución de entidades en Python: Gemini solo devolvió nombre/RIF/porcentaje en
         # texto plano, acá se completan id_proveedor/codigo_sap_proveedor, id_sociedad/
