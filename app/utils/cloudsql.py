@@ -684,6 +684,25 @@ def get_id_proveedor_esporadico(conn) -> str:
     return str(res[0])
 
 
+def existe_id_documento(id_documento: str, blob_name: str) -> bool:
+    """
+    True si el UUID ya está usado en la BD conectada, como id_factura o como archivo de origen
+    (origen_documento_id = 'invoices/<uuid>'). Ver generar_y_subir_documento en utils/storage.py.
+    """
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT 1 FROM facturas
+                WHERE id_factura::text = :id_documento
+                   OR origen_documento_id IN (:id_documento, :blob_name)
+                LIMIT 1;
+            """),
+            {"id_documento": id_documento, "blob_name": blob_name},
+        ).fetchone()
+    return row is not None
+
+
 def crear_factura_completa(datos: dict) -> str | None:
     """
     Crea una factura y su respectivo detalle (Financiero o Logístico) de manera transaccional.

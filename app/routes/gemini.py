@@ -6,10 +6,9 @@ from flask import Blueprint, request, jsonify
 from google.genai import types
 import json
 import base64
-import uuid
 from app.extensions import cliente_gemini
 from ..config import INVOICES_BUCKET_NAME, GEMINI_MODEL
-from app.utils.storage import upload_to_storage
+from app.utils.storage import generar_y_subir_documento
 from app.utils.cloudsql import get_proveedores, get_sociedades, get_impuestos
 from app.utils.entity_resolution import resolve_entities
 from app.utils.telemetry import record_gemini_usage
@@ -41,12 +40,10 @@ def extract_invoice():
         if not file_bytes or not file_name:
             return jsonify({"error": "No se proporcionó ningún archivo válido (se requiere 'file' o 'file_base64' y 'file_name')"}), 400
 
-        # 2. Subir el documento al bucket de INVOICES_BUCKET_NAME en la carpeta /invoices
-        unique_id = str(uuid.uuid4())
-        file_id = f"invoices/{unique_id}"
-        
+        # 2. Subir el documento al bucket de INVOICES_BUCKET_NAME en la carpeta /invoices, con un
+        # ID validado contra la BD y el bucket (compartido entre hosts con BDs distintas)
         try:
-            blob = upload_to_storage(INVOICES_BUCKET_NAME, file_id, file_bytes, file_name)
+            unique_id, file_id, blob = generar_y_subir_documento(INVOICES_BUCKET_NAME, file_bytes, file_name)
         except Exception as storage_err:
             return jsonify({"error": f"Error al subir el archivo a Cloud Storage: {str(storage_err)}"}), 500
 

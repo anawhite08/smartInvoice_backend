@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from app.utils.storage import (
     upload_to_storage,
+    generar_y_subir_documento,
     delete_file,
     get_location,
 )
@@ -8,7 +9,6 @@ from ..extensions import storage_client
 import base64
 import datetime
 import json
-import uuid
 from ..config import INVOICES_BUCKET_NAME
 
 storage_bp = Blueprint("storage", __name__, url_prefix="/storage")
@@ -37,21 +37,18 @@ def upload():
         return jsonify({"error": "base64 no es un valor válido"}), 400
 
     # 3. Lógica por tipo de documento (invoices -> /invoices, profile -> /profile)
-    unique_id = str(uuid.uuid4())
-    if type_document in ["invoices", "document"]:
-        blob_name = f"invoices/{unique_id}"
-    elif type_document in ["profile", "profile_image", "profile_picture"]:
-        import os
-        base_name = os.path.basename(file_name)
-        name_without_ext, _ = os.path.splitext(base_name)
-        blob_name = f"profile/{name_without_ext}"
-    else:
-        # Default fallback
-        blob_name = f"invoices/{unique_id}"
-
     # 4. USO DE LA FUNCIÓN DE UTILIDAD CENTRALIZADA
     try:
-        blob_subido = upload_to_storage(INVOICES_BUCKET_NAME, blob_name, file_bytes, file_name)
+        if type_document in ["profile", "profile_image", "profile_picture"]:
+            # El perfil se nombra por el archivo y se sobrescribe a propósito al cambiar la foto
+            import os
+            base_name = os.path.basename(file_name)
+            name_without_ext, _ = os.path.splitext(base_name)
+            blob_name = f"profile/{name_without_ext}"
+            blob_subido = upload_to_storage(INVOICES_BUCKET_NAME, blob_name, file_bytes, file_name)
+        else:
+            # invoices/document y fallback: ID validado contra la BD y el bucket compartido
+            _, blob_name, blob_subido = generar_y_subir_documento(INVOICES_BUCKET_NAME, file_bytes, file_name)
 
         # Generar URL firmada (365 días para imágenes de perfil, 1 hora por defecto para facturas por seguridad)
         try:

@@ -7,6 +7,7 @@ from app.utils.general_utils import retry_function
 import magic  # si lo necesitas para inferir el tipo binario real
 import base64
 import mimetypes
+from google.api_core.exceptions import PreconditionFailed
 
 
 ## Funciones de utilidad
@@ -108,8 +109,9 @@ def get_mime_type(file_id):
     return mime_type
 
 
-def upload_to_storage(bucket_name, blob_name, file_bytes, file_name):
-    """Lógica centralizada para detectar tipo y subir a GCS"""
+def upload_to_storage(bucket_name, blob_name, file_bytes, file_name, if_generation_match=None):
+    """Lógica centralizada para detectar tipo y subir a GCS.
+    if_generation_match=0 hace que GCS rechace la subida (PreconditionFailed) si el blob ya existe."""
     content_type, _ = mimetypes.guess_type(file_name)
 
     if content_type is None:
@@ -124,8 +126,35 @@ def upload_to_storage(bucket_name, blob_name, file_bytes, file_name):
 
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(str(blob_name))
-    blob.upload_from_string(file_bytes, content_type=content_type)
+    blob.upload_from_string(file_bytes, content_type=content_type, if_generation_match=if_generation_match)
     return blob  # Retornamos el objeto blob por si necesitamos generar la URL firmada
+
+
+def generar_y_subir_documento(bucket_name, file_bytes, file_name, prefijo="invoices", max_intentos=5):
+    """
+    Genera un UUID para el documento que no exista ni en la BD conectada ni en el bucket, y sube
+    el archivo a '<prefijo>/<uuid>'. Hay varios hosts (cada uno con su propia BD) compartiendo el
+    mismo bucket, así que la BD local no basta: el bucket se valida con if_generation_match=0, que
+    es atómico (si otro host creó ese blob, aunque sea en el mismo instante, GCS rechaza la subida).
+    Devuelve (unique_id, blob_name, blob).
+    """
+    from .cloudsql import existe_id_documento
+
+    for intento in range(1, max_intentos + 1):
+        unique_id = str(uuid.uuid4())
+        blob_name = f"{prefijo}/{unique_id}"
+
+        if existe_id_documento(unique_id, blob_name):
+            print(f"⚠️ ID {unique_id} ya existe en la BD, generando otro (intento {intento}/{max_intentos})")
+            continue
+
+        try:
+            blob = upload_to_storage(bucket_name, blob_name, file_bytes, file_name, if_generation_match=0)
+            return unique_id, blob_name, blob
+        except PreconditionFailed:
+            print(f"⚠️ ID {unique_id} ya existe en el bucket, generando otro (intento {intento}/{max_intentos})")
+
+    raise RuntimeError(f"No se pudo generar un ID de documento único tras {max_intentos} intentos")
 
 
 def rename_blob(bucket_name, blob_name, new_blob_name):
