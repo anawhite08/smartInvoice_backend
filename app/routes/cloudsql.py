@@ -1,7 +1,7 @@
 import uuid
 from flask import Blueprint, json, request, jsonify, send_file
 from ..extensions import get_engine
-from ..utils.firebase_admin import crear_firebase_user, delete_firebase_user
+from ..utils.firebase_admin import crear_firebase_user, delete_firebase_user, actualizar_firebase_user
 from ..utils.cloudsql import (
     crear_usuario,
     get_usuarios_activos,
@@ -139,11 +139,40 @@ def rutas_usuarios_detalle(id_usuario):
             if not data:
                 return jsonify({"error": "No se proporcionaron datos"}), 400
 
+            usuario_actual = get_usuario_por_id(id_usuario)
+            if not usuario_actual:
+                return jsonify({"error": "Usuario no encontrado"}), 404
+
+            if "nombre" in data and not (data.get("nombre") or "").strip():
+                return jsonify({"error": "El campo 'nombre' es obligatorio"}), 400
+            if "email" in data and not (data.get("email") or "").strip():
+                return jsonify({"error": "El campo 'email' es obligatorio"}), 400
+
+            # Correo y nombre también viven en Firebase Auth (el login usa ese correo), así que
+            # se sincronizan primero; si después falla la BD, se revierte Firebase.
+            email_actual = usuario_actual.get("email")
+            nombre_actual = f"{usuario_actual.get('nombre') or ''} {usuario_actual.get('apellido') or ''}".strip()
+            nuevo_email = data.get("email") if data.get("email") and data.get("email") != email_actual else None
+            nuevo_nombre = f"{data.get('nombre', usuario_actual.get('nombre')) or ''} {data.get('apellido', usuario_actual.get('apellido')) or ''}".strip()
+            nuevo_display = nuevo_nombre if nuevo_nombre != nombre_actual else None
+
+            firebase_uid = None
+            if nuevo_email or nuevo_display:
+                firebase_uid, firebase_err = actualizar_firebase_user(id_usuario, email_actual, email=nuevo_email, display_name=nuevo_display)
+                if firebase_err:
+                    return jsonify({"error": f"Error al actualizar en Firebase: {firebase_err}"}), 400
+
             success = actualizar_usuario(id_usuario, data)
             if success:
-                return jsonify({"message": "Usuario actualizado"}), 200
-            else:
-                return jsonify({"error": "No se pudo actualizar el usuario"}), 404
+                return jsonify({"status": "success", "message": "Usuario actualizado"}), 200
+
+            if firebase_uid:
+                actualizar_firebase_user(
+                    firebase_uid, nuevo_email or email_actual,
+                    email=email_actual if nuevo_email else None,
+                    display_name=nombre_actual if nuevo_display else None,
+                )
+            return jsonify({"error": "No se pudo actualizar el usuario en la base de datos. Se revirtieron los cambios en Firebase."}), 500
 
         if request.method == "DELETE":
             success = eliminar_usuario(id_usuario)

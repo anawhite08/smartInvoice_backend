@@ -32,6 +32,33 @@ def delete_firebase_user(correo):
     except Exception as e:
         return False, f"Error en Firebase: {str(e)}"
 
+def actualizar_firebase_user(uid, email_actual, email=None, display_name=None):
+    """
+    Actualiza correo y/o nombre visible en Firebase Auth. Busca primero por uid (los usuarios
+    nuevos comparten UUID con la BD) y, si no existe, por el correo actual (usuarios antiguos
+    con UID distinto). Devuelve (firebase_uid, error).
+    """
+    try:
+        try:
+            firebase_user = auth.get_user(uid)
+        except auth.UserNotFoundError:
+            firebase_user = auth.get_user_by_email(email_actual)
+
+        cambios = {}
+        if email is not None:
+            cambios["email"] = email
+        if display_name is not None:
+            cambios["display_name"] = display_name
+        if cambios:
+            auth.update_user(firebase_user.uid, **cambios)
+        return firebase_user.uid, None
+    except auth.UserNotFoundError:
+        return None, "Usuario no encontrado en Firebase"
+    except auth.EmailAlreadyExistsError:
+        return None, f"El correo '{email}' ya está registrado en Firebase"
+    except Exception as e:
+        return None, str(e)
+
 def crear_firebase_user(email, nombre, apellido, uid=None):
     import secrets
     try:
